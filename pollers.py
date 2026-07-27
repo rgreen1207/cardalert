@@ -16,6 +16,7 @@ import os
 import re
 import json
 import requests
+import config
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -70,8 +71,9 @@ def check_walmart(product_url: str):
 
 def check_bestbuy(sku: str):
     """Uses Best Buy's official public Products API. Needs a free API key from
-    developer.bestbuy.com — set BESTBUY_API_KEY in the environment / .env file."""
-    api_key = os.environ.get("BESTBUY_API_KEY")
+    developer.bestbuy.com — set it on the /settings page, or BESTBUY_API_KEY
+    in .env."""
+    api_key = config.get("bestbuy_api_key")
     if not api_key:
         return {"in_stock": False, "price": None, "raw_status": "NO_API_KEY"}
     url = (

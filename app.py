@@ -8,10 +8,25 @@ import db
 import scheduler
 import pollers
 import license as licensing
+import config
 
 app = FastAPI(title="Card Alert")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+_EXEMPT_FROM_SETUP_REDIRECT = {"/setup", "/setup/save", "/setup/skip"}
+
+
+@app.middleware("http")
+async def require_setup(request: Request, call_next):
+    path = request.url.path
+    if (
+        not path.startswith("/static")
+        and path not in _EXEMPT_FROM_SETUP_REDIRECT
+        and not config.is_setup_complete()
+    ):
+        return RedirectResponse("/setup")
+    return await call_next(request)
 
 
 @app.on_event("startup")
@@ -58,6 +73,91 @@ def products_page(request: Request, error: Optional[str] = None):
         "free_retailer_limit": licensing.FREE_TIER_RETAILER_LIMIT,
         "error": error,
     })
+
+
+@app.get("/setup")
+def setup_wizard(request: Request):
+    return templates.TemplateResponse("setup.html", {
+        "request": request,
+        "values": config.all_values(),
+    })
+
+
+@app.post("/setup/save")
+def setup_save(
+    discord_webhook_url: str = Form(""),
+    ntfy_topic: str = Form(""),
+    pushover_user_key: str = Form(""),
+    pushover_app_token: str = Form(""),
+    twilio_account_sid: str = Form(""),
+    twilio_auth_token: str = Form(""),
+    twilio_from_number: str = Form(""),
+    twilio_to_number: str = Form(""),
+    bestbuy_api_key: str = Form(""),
+):
+    for key, value in {
+        "discord_webhook_url": discord_webhook_url,
+        "ntfy_topic": ntfy_topic,
+        "pushover_user_key": pushover_user_key,
+        "pushover_app_token": pushover_app_token,
+        "twilio_account_sid": twilio_account_sid,
+        "twilio_auth_token": twilio_auth_token,
+        "twilio_from_number": twilio_from_number,
+        "twilio_to_number": twilio_to_number,
+        "bestbuy_api_key": bestbuy_api_key,
+    }.items():
+        if value:
+            config.set(key, value)
+    config.mark_setup_complete()
+    return RedirectResponse("/products", status_code=303)
+
+
+@app.post("/setup/skip")
+def setup_skip():
+    config.mark_setup_complete()
+    return RedirectResponse("/products", status_code=303)
+
+
+@app.get("/settings")
+def settings_page(request: Request, saved: Optional[str] = None):
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "active_page": "settings",
+        "values": config.all_values(),
+        "is_pro": licensing.is_pro(),
+        "saved": saved,
+    })
+
+
+@app.post("/settings/save")
+def settings_save(
+    discord_webhook_url: str = Form(""),
+    ntfy_topic: str = Form(""),
+    pushover_user_key: str = Form(""),
+    pushover_app_token: str = Form(""),
+    twilio_account_sid: str = Form(""),
+    twilio_auth_token: str = Form(""),
+    twilio_from_number: str = Form(""),
+    twilio_to_number: str = Form(""),
+    bestbuy_api_key: str = Form(""),
+    gumroad_product_id: str = Form(""),
+    cardalert_license_key: str = Form(""),
+):
+    for key, value in {
+        "discord_webhook_url": discord_webhook_url,
+        "ntfy_topic": ntfy_topic,
+        "pushover_user_key": pushover_user_key,
+        "pushover_app_token": pushover_app_token,
+        "twilio_account_sid": twilio_account_sid,
+        "twilio_auth_token": twilio_auth_token,
+        "twilio_from_number": twilio_from_number,
+        "twilio_to_number": twilio_to_number,
+        "bestbuy_api_key": bestbuy_api_key,
+        "gumroad_product_id": gumroad_product_id,
+        "cardalert_license_key": cardalert_license_key,
+    }.items():
+        config.set(key, value)
+    return RedirectResponse("/settings?saved=1", status_code=303)
 
 
 @app.get("/help")

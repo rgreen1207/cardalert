@@ -1,41 +1,27 @@
 """
-Feature-tier gating.
+Feature-tier gating. See PROJECT_LOG.md for the reasoning on why this file
+stays public/readable rather than obfuscated.
 
-Design intent: this file is intentionally readable and public — hiding the
-check doesn't meaningfully stop anyone determined to bypass it, and an
-open, honest gate is more trustworthy than an obfuscated one. What makes
-paying worthwhile isn't secrecy, it's that the paid tier's real value
-(the auto-updater keeping pollers working as retailers change their sites,
-new pollers landing first, pattern analytics that compounds over time) is
-much harder to get value from off a static cloned snapshot.
-
-Wiring to Gumroad (once you've created a product there):
-    1. Create a product on Gumroad, enable license keys.
-    2. Set GUMROAD_PRODUCT_ID in .env.
-    3. User enters their license key in the dashboard settings page.
-    4. verify_license() below calls Gumroad's public license-verification
-       endpoint (https://api.gumroad.com/v2/licenses/verify) — no SDK needed,
-       it's a plain POST. Response tells you if the key is valid + how many
-       times it's been activated (Gumroad tracks this for you).
-
-Until a key is configured, everything runs in FREE_TIER mode.
+Credentials come from config.py (settings page or .env). Entering a license
+key on the settings page takes effect within the hour (see CACHE_TTL) since
+Gumroad verification is a network call we don't want to fire on every page
+load.
 """
-import os
 import time
 import requests
-
-GUMROAD_PRODUCT_ID = os.environ.get("GUMROAD_PRODUCT_ID", "")
-LICENSE_KEY = os.environ.get("CARDALERT_LICENSE_KEY", "")
+import config
 
 FREE_TIER_RETAILER_LIMIT = 2
 FREE_TIER_ALLOWED_CHANNELS = {"dashboard"}
 
 _cache = {"valid": False, "checked_at": 0}
-CACHE_TTL = 3600  # re-check hourly, not on every request
+CACHE_TTL = 3600
 
 
 def is_pro() -> bool:
-    if not GUMROAD_PRODUCT_ID or not LICENSE_KEY:
+    product_id = config.get("gumroad_product_id")
+    license_key = config.get("cardalert_license_key")
+    if not product_id or not license_key:
         return False
     now = time.time()
     if now - _cache["checked_at"] < CACHE_TTL:
@@ -43,21 +29,17 @@ def is_pro() -> bool:
     try:
         r = requests.post(
             "https://api.gumroad.com/v2/licenses/verify",
-            data={"product_id": GUMROAD_PRODUCT_ID, "license_key": LICENSE_KEY},
+            data={"product_id": product_id, "license_key": license_key},
             timeout=8,
         )
-        data = r.json()
-        valid = bool(data.get("success"))
+        valid = bool(r.json().get("success"))
     except requests.RequestException:
-        # Network hiccup shouldn't lock a paying user out — trust the last
-        # good check for a while, only downgrade after repeated failures.
-        valid = _cache["valid"]
+        valid = _cache["valid"]  # network hiccup shouldn't lock out a paying user
     _cache.update(valid=valid, checked_at=now)
     return valid
 
 
 def enforce_retailer_limit(current_active_retailers: set) -> bool:
-    """Returns True if adding one more distinct retailer is allowed."""
     if is_pro():
         return True
     return len(current_active_retailers) < FREE_TIER_RETAILER_LIMIT
@@ -71,6 +53,4 @@ def channel_allowed(channel: str) -> bool:
 
 def feature_allowed(feature: str) -> bool:
     """feature in {"pattern_analytics", "forecast_signals", "lgs_generic", "sms", "ntfy", "pushover", "discord"}"""
-    if is_pro():
-        return True
-    return False
+    return is_pro()
