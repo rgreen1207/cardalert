@@ -8,7 +8,7 @@
 # What this does: clones the repo, creates a Python venv, installs
 # dependencies, sets up a systemd service, and starts it. All configuration
 # (Discord webhook, ntfy, Pushover, Twilio, license key) happens afterward
-# in your browser via the setup wizard — deliberately not here, since
+# in your browser via the setup wizard, deliberately not here, since
 # interactive prompts don't work reliably when a script is piped through
 # `curl | bash` (stdin is consumed by the pipe, not your keyboard).
 
@@ -31,7 +31,7 @@ if ! command -v git &>/dev/null; then
 fi
 
 checkout_latest_release() {
-  # Prefer the latest tagged release over main — this means an existing
+  # Prefer the latest tagged release over main. This means an existing
   # install only picks up a new version when you explicitly cut a release,
   # not on every commit that happens to land on main.
   git fetch --tags --quiet
@@ -40,14 +40,14 @@ checkout_latest_release() {
     git checkout "$LATEST_TAG" --quiet
     echo "Using release ${LATEST_TAG}"
   else
-    echo "No tagged releases found yet — using main (expect this to change once releases exist)."
+    echo "No tagged releases found yet, using main (expect this to change once releases exist)."
     git checkout main --quiet
     git pull --quiet
   fi
 }
 
 if [ -d "$INSTALL_DIR" ]; then
-  echo "Found existing install at $INSTALL_DIR — checking for updates."
+  echo "Found existing install at $INSTALL_DIR, checking for updates."
   cd "$INSTALL_DIR"
   checkout_latest_release
 else
@@ -104,5 +104,5 @@ echo ""
 echo "  http://${IP_ADDR}:${PORT}"
 echo ""
 echo "First visit walks you through an optional setup wizard for alerts"
-echo "(Discord, ntfy, Pushover, SMS) — skip anything you don't want, you"
+echo "(Discord, ntfy, Pushover, SMS). Skip anything you don't want, you"
 echo "can always add it later from the Settings page."

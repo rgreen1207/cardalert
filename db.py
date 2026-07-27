@@ -89,14 +89,14 @@ def init_db():
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_SCHEMA_VERSION,))
         _run_migrations(conn)
     try:
-        os.chmod(DB_PATH, 0o600)  # DB now stores credentials via the settings table — owner-read-only
+        os.chmod(DB_PATH, 0o600)  # DB now stores credentials via the settings table, owner-read-only
     except OSError:
         pass
 
 
 def _run_migrations(conn):
     """Simple numbered migrations. Add a new elif block + bump
-    CURRENT_SCHEMA_VERSION when the schema changes — never edit the SCHEMA
+    CURRENT_SCHEMA_VERSION when the schema changes. Never edit the SCHEMA
     string in a way that breaks existing installs' data."""
     row = conn.execute("SELECT version FROM schema_version").fetchone()
     version = row["version"] if row else 0
@@ -244,7 +244,7 @@ def all_settings():
 def restock_pattern(item_id):
     """Pro-tier feature: summarize which day-of-week / hour this item's
     restocks tend to happen, purely from this install's own historical
-    polling data — no third-party data involved."""
+    polling data. No third-party data involved."""
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT ts FROM status_log

@@ -2,9 +2,9 @@
 Centralized configuration.
 
 Two sources, checked in this order:
-1. The `settings` table in the DB — written by the setup wizard (/setup) or
+1. The `settings` table in the DB, written by the setup wizard (/setup) or
    the settings page (/settings), no restart or file editing required.
-2. Environment variables (from .env) — still supported for anyone who wants
+2. Environment variables (from .env), still supported for anyone who wants
    to configure via file instead of the web UI (e.g. scripted deployments).
 
 DB settings win if both are set, since they're the more recently-touched,
@@ -25,9 +25,17 @@ _KEYS = {
     "twilio_from_number": ("TWILIO_FROM_NUMBER", ""),
     "twilio_to_number": ("TWILIO_TO_NUMBER", ""),
     "bestbuy_api_key": ("BESTBUY_API_KEY", ""),
-    "gumroad_product_id": ("GUMROAD_PRODUCT_ID", ""),
-    "cardalert_license_key": ("CARDALERT_LICENSE_KEY", ""),
+    "currency": ("CARDALERT_CURRENCY", "USD"),
 }
+
+CURRENCY_SYMBOLS = {
+    "USD": "$", "CAD": "$", "AUD": "$", "NZD": "$",
+    "EUR": "€", "GBP": "£", "JPY": "¥",
+}
+
+
+def currency_symbol() -> str:
+    return CURRENCY_SYMBOLS.get(get("currency"), "$")
 
 
 def get(key: str) -> str:

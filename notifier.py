@@ -1,6 +1,6 @@
 """
 Notification channels. Credentials come from config.py, which checks the
-settings page/wizard's DB values first, then .env — so editing a webhook or
+settings page/wizard's DB values first, then .env. Editing a webhook or
 key in the web UI takes effect on the very next poll cycle, no restart.
 
 Cost model, unchanged from before:
@@ -12,14 +12,16 @@ import requests
 import config
 
 
-def send_discord(message: str):
+def send_discord(message: str) -> bool:
     url = config.get("discord_webhook_url")
     if not url:
-        return
+        return False
     try:
-        requests.post(url, json={"content": message}, timeout=8)
+        r = requests.post(url, json={"content": message}, timeout=8)
+        return r.status_code < 300
     except requests.RequestException as e:
         print("[notifier] Discord send failed:", type(e).__name__)
+        return False
 
 
 def send_ntfy(message: str, title: str = "Card Alert"):

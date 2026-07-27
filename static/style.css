@@ -306,3 +306,32 @@ main ol li { margin-bottom: 4px; }
 .setup-actions .secondary { background: transparent; color: var(--text-dim); }
 .setup-actions .secondary:hover { color: var(--text); border-color: var(--text-dim); }
 .panel--saved { border-color: var(--green); color: var(--green); }
+
+.label-row { display: inline-flex; align-items: center; gap: 0; }
+.checkbox-field { grid-column: span 1; }
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+.checkbox-option {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  color: var(--text);
+  text-transform: none;
+  font-weight: 400;
+}
+.checkbox-option input { width: auto; margin: 0; }
+
+.nav-donate {
+  margin-left: auto;
+  color: var(--amber) !important;
+}
+.top-nav { flex-wrap: wrap; }
+
+.test-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.test-output { font-size: 0.8rem; color: var(--text-dim); font-family: 'IBM Plex Mono', monospace; }

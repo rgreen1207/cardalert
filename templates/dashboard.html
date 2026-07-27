@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Card Alert — Dashboard</title>
+<title>Card Alert - Dashboard</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -15,7 +15,6 @@
   </div>
   <div class="board-meta">
     <span>Pokémon Center window: <strong class="{{ 'ok' if pc_window_open else 'muted' }}">{{ 'OPEN' if pc_window_open else 'closed (Mon–Thu 8a–1p PST)' }}</strong></span>
-    <span class="tier-badge {{ 'tier--pro' if is_pro else 'tier--free' }}">{{ 'PRO' if is_pro else 'FREE' }}</span>
   </div>
 </header>
 
@@ -58,13 +57,13 @@
             {% elif status %}{{ 'SOLD OUT' if status.in_stock == 0 else status.raw_status }}
             {% else %}—{% endif %}
           </td>
-          <td class="mono">{{ '$%.2f'|format(status.price) if status and status.price else '—' }}</td>
+          <td class="mono">{% if status and status.price %}{{ currency_symbol }}{{ '%.2f'|format(status.price) }}{% else %}—{% endif %}</td>
           <td>{% if item.product_url %}<a href="{{ item.product_url }}" target="_blank">view</a>{% endif %}</td>
           <td class="mono">{{ item.remaining_qty }} / {{ item.target_qty }}</td>
-          <td>{% if is_pro %}<button type="button" class="pattern-btn" data-item-id="{{ item.id }}">pattern</button>{% endif %}</td>
+          <td><button type="button" class="pattern-btn" data-item-id="{{ item.id }}">pattern</button></td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">Nothing on the watchlist yet — <a href="/products">add a product</a> to get started.</td></tr>
+        <tr><td colspan="8" class="empty">Nothing on the watchlist yet. <a href="/products">Add a product</a> to get started.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -83,7 +82,7 @@
   </section>
 
   <section class="panel">
-    <h2>Restock chatter & forecasts {{ '' if is_pro else '(pro tier)' }}</h2>
+    <h2>Restock chatter & forecasts</h2>
     <ul class="feed">
       {% for s in signals %}
       <li><span class="mono ts">[{{ s.kind|default('chatter') }}] {{ s.source }}</span> <a href="{{ s.url }}" target="_blank">{{ s.title }}</a></li>

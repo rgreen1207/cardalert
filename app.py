@@ -1,20 +1,23 @@
+import base64
+from typing import Optional, List
+
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from typing import Optional
+from starlette.responses import Response
 
 import db
 import scheduler
 import pollers
-import license as licensing
+import notifier
 import config
 
 app = FastAPI(title="Card Alert")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-import base64
+DONATE_URL = "https://ko-fi.com/ryanthedev"
 
 _EXEMPT_FROM_SETUP_REDIRECT = {"/setup", "/setup/save", "/setup/skip"}
 
@@ -43,8 +46,7 @@ async def require_dashboard_password(request: Request, call_next):
             if config.check_dashboard_password(supplied_password):
                 return await call_next(request)
         except (ValueError, UnicodeDecodeError):
-            pass  # malformed Authorization header — falls through to 401 below
-    from starlette.responses import Response
+            pass  # malformed Authorization header, falls through to 401 below
     return Response(
         status_code=401,
         headers={"WWW-Authenticate": 'Basic realm="Card Alert"'},
@@ -60,7 +62,17 @@ def startup():
 
 def _enrich(item: dict) -> dict:
     item["last_status"] = db.latest_status(item["id"])
+    item["notify_channels_list"] = [c for c in (item.get("notify_channel") or "").split(",") if c]
     return item
+
+
+def _common_context(request: Request, active_page: str) -> dict:
+    return {
+        "request": request,
+        "active_page": active_page,
+        "donate_url": DONATE_URL,
+        "currency_symbol": config.currency_symbol(),
+    }
 
 
 @app.get("/")
@@ -69,33 +81,22 @@ def dashboard(request: Request):
     alerts = db.recent_alerts(limit=20)
     signals = db.recent_drop_signals(limit=15)
     pc_window_open = scheduler.pokemon_center_window_open()
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "active_page": "dashboard",
-        "items": items,
-        "alerts": alerts,
-        "signals": signals,
-        "pc_window_open": pc_window_open,
-        "is_pro": licensing.is_pro(),
-    })
+    ctx = _common_context(request, "dashboard")
+    ctx.update(items=items, alerts=alerts, signals=signals, pc_window_open=pc_window_open)
+    return templates.TemplateResponse("dashboard.html", ctx)
 
 
 @app.get("/products")
-def products_page(request: Request, error: Optional[str] = None):
+def products_page(request: Request):
     items = [_enrich(i) for i in db.list_items()]
-    active_retailers = {i["retailer"] for i in db.list_items(active_only=True)}
-    return templates.TemplateResponse("products.html", {
-        "request": request,
-        "active_page": "products",
-        "items": items,
-        "retailers": ["target", "walmart", "bestbuy", "bn", "pokemon_center", "lgs_shopify", "lgs_generic"],
-        "games": ["pokemon", "mtg", "yugioh", "onepiece", "other"],
-        "channels": ["dashboard", "discord", "ntfy", "pushover", "sms"],
-        "is_pro": licensing.is_pro(),
-        "retailer_limit_reached": (not licensing.is_pro()) and len(active_retailers) >= licensing.FREE_TIER_RETAILER_LIMIT,
-        "free_retailer_limit": licensing.FREE_TIER_RETAILER_LIMIT,
-        "error": error,
-    })
+    ctx = _common_context(request, "products")
+    ctx.update(
+        items=items,
+        retailers=["target", "walmart", "bestbuy", "bn", "pokemon_center", "amazon", "lgs_shopify", "lgs_generic"],
+        games=["pokemon", "mtg", "yugioh", "onepiece", "other"],
+        push_channels=["discord", "ntfy", "pushover", "sms"],
+    )
+    return templates.TemplateResponse("products.html", ctx)
 
 
 @app.get("/setup")
@@ -103,6 +104,7 @@ def setup_wizard(request: Request):
     return templates.TemplateResponse("setup.html", {
         "request": request,
         "values": config.all_values(),
+        "donate_url": DONATE_URL,
     })
 
 
@@ -150,8 +152,9 @@ def settings_page(request: Request, saved: Optional[str] = None):
         "request": request,
         "active_page": "settings",
         "values": config.all_values(),
-        "is_pro": licensing.is_pro(),
         "saved": saved,
+        "donate_url": DONATE_URL,
+        "currencies": list(config.CURRENCY_SYMBOLS.keys()),
     })
 
 
@@ -166,8 +169,7 @@ def settings_save(
     twilio_from_number: str = Form(""),
     twilio_to_number: str = Form(""),
     bestbuy_api_key: str = Form(""),
-    gumroad_product_id: str = Form(""),
-    cardalert_license_key: str = Form(""),
+    currency: str = Form("USD"),
     dashboard_password: str = Form(""),
 ):
     for key, value in {
@@ -180,20 +182,29 @@ def settings_save(
         "twilio_from_number": twilio_from_number,
         "twilio_to_number": twilio_to_number,
         "bestbuy_api_key": bestbuy_api_key,
-        "gumroad_product_id": gumroad_product_id,
-        "cardalert_license_key": cardalert_license_key,
+        "currency": currency,
     }.items():
         config.set(key, value)
     if dashboard_password:
-        # blank field on the settings page means "leave unchanged" — the
+        # blank field on the settings page means "leave unchanged." The
         # stored hash is never rendered back into the form to fill this in
         config.set_dashboard_password(dashboard_password)
     return RedirectResponse("/settings?saved=1", status_code=303)
 
 
+@app.post("/settings/test-discord")
+def test_discord():
+    url = config.get("discord_webhook_url")
+    if not url:
+        return JSONResponse({"ok": False, "error": "No Discord webhook URL saved yet."})
+    ok = notifier.send_discord("🔔 Test alert from Card Alert. If you see this, your Discord webhook works.")
+    return JSONResponse({"ok": ok})
+
+
 @app.get("/help")
 def help_page(request: Request):
-    return templates.TemplateResponse("help.html", {"request": request, "active_page": "help"})
+    ctx = _common_context(request, "help")
+    return templates.TemplateResponse("help.html", ctx)
 
 
 @app.post("/items/add")
@@ -206,15 +217,11 @@ def add_item(
     target_qty: int = Form(1),
     msrp: Optional[float] = Form(None),
     max_pct_over_msrp: float = Form(0),
-    notify_channel: str = Form("dashboard"),
+    notify_channels: List[str] = Form([]),
 ):
-    active_retailers = {i["retailer"] for i in db.list_items(active_only=True)}
-    if retailer not in active_retailers and not licensing.enforce_retailer_limit(active_retailers):
-        return RedirectResponse("/products?error=retailer_limit", status_code=303)
-    if not licensing.channel_allowed(notify_channel):
-        notify_channel = "dashboard"
+    channels_csv = ",".join(notify_channels)
     db.add_item(name, game, retailer, identifier, product_url, target_qty, msrp,
-                max_pct_over_msrp, notify_channel)
+                max_pct_over_msrp, channels_csv)
     return RedirectResponse("/products", status_code=303)
 
 
@@ -247,8 +254,6 @@ def mark_purchased(item_id: int, qty: int = Form(1)):
 
 @app.get("/items/{item_id}/pattern")
 def item_pattern(item_id: int):
-    if not licensing.feature_allowed("pattern_analytics"):
-        return JSONResponse({"error": "pattern analytics is a pro-tier feature"}, status_code=403)
     pattern = db.restock_pattern(item_id)
     if not pattern:
         return JSONResponse({"error": "not enough history yet"}, status_code=404)

@@ -4,7 +4,7 @@ Retailer pollers.
 IMPORTANT SCOPE NOTE (read this before extending):
 Every function here does exactly one thing: fetch a public page/endpoint and
 read back stock + price. None of these functions add to cart, log in, hold a
-session, or submit any action on a retailer's site. That line is intentional —
+session, or submit any action on a retailer's site. That line is intentional.
 see PROJECT_LOG.md for why. If you're future-Claude or future-Ryan extending
 this file, keep new pollers read-only.
 
@@ -71,7 +71,7 @@ def check_walmart(product_url: str):
 
 def check_bestbuy(sku: str):
     """Uses Best Buy's official public Products API. Needs a free API key from
-    developer.bestbuy.com — set it on the /settings page, or BESTBUY_API_KEY
+    developer.bestbuy.com. Set it on the /settings page, or BESTBUY_API_KEY
     in .env."""
     api_key = config.get("bestbuy_api_key")
     if not api_key:
@@ -104,7 +104,7 @@ def check_bn(product_url: str):
 
 def check_pokemon_center(product_url: str):
     """Checks the Pokémon Center product page. During hot drops this site puts
-    you behind a Queue-it wait room before you ever see stock state — this
+    you behind a Queue-it wait room before you ever see stock state. This
     function reports that state too, so an alert can fire as soon as the queue
     opens rather than only once items are confirmed in stock."""
     r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
@@ -145,7 +145,7 @@ def check_lgs_shopify(shop_and_handle: str):
 def check_lgs_generic(product_url: str):
     """Universal fallback for LGS sites on WooCommerce, BigCommerce, Square,
     or any custom platform without a clean structured endpoint. Lower
-    reliability than the Shopify poller — pure text heuristics — but works
+    reliability than the Shopify poller (pure text heuristics), but works
     for basically any storefront that renders stock state as visible text."""
     r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
@@ -157,6 +157,56 @@ def check_lgs_generic(product_url: str):
     price = float(price_match.group(1)) if price_match else None
     in_stock = has_add_to_cart and not sold_out
     return {"in_stock": in_stock, "price": price, "raw_status": "SOLD_OUT" if sold_out else "AVAILABLE"}
+
+
+def check_amazon(identifier: str):
+    """Amazon. Only counts as in-stock when the listing is actually
+    'Ships from and sold by Amazon.com', not a third-party marketplace
+    seller. Third-party listings are where most of the price-gouging on
+    hot TCG products happens, so those are deliberately excluded rather
+    than alerted on.
+
+    `identifier` can be a bare 10-character ASIN or a full product URL,
+    either way we normalize to a canonical /dp/ URL for the actual request.
+
+    Caveat, more than any other poller here: Amazon fights scraping harder
+    than any other retailer on this list and changes page structure often.
+    Treat this one as the most likely to need re-tuning over time."""
+    asin_match = re.fullmatch(r"[A-Z0-9]{10}", identifier.strip())
+    if asin_match:
+        asin = identifier.strip()
+    else:
+        url_match = re.search(r"/(?:dp|gp/product|ASIN)/([A-Z0-9]{10})", identifier)
+        if not url_match:
+            return {"in_stock": False, "price": None, "raw_status": "INVALID_IDENTIFIER"}
+        asin = url_match.group(1)
+
+    url = f"https://www.amazon.com/dp/{asin}"
+    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    r.raise_for_status()
+    text = r.text
+
+    sold_by_amazon = bool(re.search(r"ships from and sold by amazon(\.com)?", text, re.I))
+    third_party_seller = bool(re.search(r"sold by(?!\s*amazon)[^<]{1,60}", text, re.I)) and not sold_by_amazon
+    sold_out = bool(re.search(r"(currently unavailable|out of stock)", text, re.I))
+    has_buybox = bool(re.search(r"add-to-cart-button|addToCart", text, re.I))
+
+    price = None
+    price_match = re.search(r'"apexPriceToPay"[^}]*?"amount"\s*:\s*([\d.]+)', text)
+    if not price_match:
+        price_match = re.search(r'class="a-price-whole">([\d,]+)<', text)
+    if price_match:
+        try:
+            price = float(price_match.group(1).replace(",", ""))
+        except ValueError:
+            price = None
+
+    if third_party_seller and not sold_by_amazon:
+        return {"in_stock": False, "price": price, "raw_status": "THIRD_PARTY_SELLER_ONLY"}
+    if sold_out or not has_buybox:
+        return {"in_stock": False, "price": price, "raw_status": "SOLD_OUT"}
+    in_stock = sold_by_amazon and has_buybox and not sold_out
+    return {"in_stock": in_stock, "price": price, "raw_status": "AVAILABLE" if in_stock else "UNKNOWN"}
 
 
 def verify_shopify_store(domain: str):
@@ -181,6 +231,7 @@ POLLERS = {
     "bestbuy": check_bestbuy,
     "bn": check_bn,
     "pokemon_center": check_pokemon_center,
+    "amazon": check_amazon,
     "lgs_shopify": check_lgs_shopify,
     "lgs_generic": check_lgs_generic,
 }
