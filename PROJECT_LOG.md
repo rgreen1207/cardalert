@@ -120,6 +120,67 @@ sightings extrapolated forward. None of this requires anything off-limits —
 `poll_forecasts` + `db.restock_pattern` are our own versions of #1 and #4,
 built entirely from public/own data.
 
+## In-app updater (2026-07-27)
+Ryan wanted an actual "click to update" control on the Settings page,
+not just "re-run the install command from a terminal." Built:
+- `updater.py` — `check_for_update()` fetches tags/main from origin and
+  compares against the current checkout; `apply_update()` checks out the
+  latest tag, reinstalls deps with whatever interpreter/venv the process
+  is already running under (`sys.executable`-relative pip), then schedules
+  a restart a couple seconds out via a detached thread so the HTTP
+  response goes out before the process gets killed.
+- **The one genuinely delicate part**: the running process has to trigger
+  its own replacement. Solved with `sudo -n systemctl restart cardalert`
+  in a detached subprocess (`start_new_session=True`), which only works
+  non-interactively because `install.sh` now writes a sudoers rule scoped
+  to exactly that one command, for exactly this service and user
+  (`/etc/sudoers.d/cardalert-restart`), validated with `visudo -c` before
+  being kept. If that rule is missing (manual installs that skip it), the
+  git pull and dependency install still succeed; only the automatic
+  restart silently no-ops, and a manual `sudo systemctl restart cardalert`
+  finishes the job. **Do not widen this sudo rule beyond the single
+  restart command if touching this later** — that scoping is the entire
+  reason it's safe to grant passwordless.
+- `_run`'s `cwd` parameter was initially a default-bound argument
+  (`cwd=REPO_DIR`), which silently captured `REPO_DIR`'s value at
+  **module-import time**, not call time. Found this while trying to
+  redirect `REPO_DIR` at a fresh Python session to test against a real
+  throwaway git repo. It's not a bug for the actual running app (its
+  `REPO_DIR` never changes after import), but it made the function harder
+  to test and slightly less correct in principle. Fixed to read
+  `REPO_DIR` inside the function body (`cwd=None` default, resolved at
+  call time) instead. **If you ever add another function with a
+  module-level constant as a default argument, prefer this pattern.**
+- Settings page: new "Software updates" panel showing the currently
+  checked-out ref, a "Check for updates" button, and a "Update now"
+  button that only appears once a check finds something newer. JS
+  deliberately treats a fetch error on `/settings/apply-update` as
+  *expected success* (the connection drops because the app is mid-restart)
+  and reloads the page after a delay either way.
+- Tests: `tests/test_updater.py` (17 tests, all subprocess calls mocked
+  via a `FakeCompletedProcess` helper, mirroring the pattern already used
+  for HTTP mocking elsewhere) plus 3 new integration tests in
+  `tests/test_app.py` for the two endpoints and the settings-page version
+  display. **Also independently verified against a real throwaway git
+  repo** (two tags, a real `origin` remote, actual `git fetch`/`checkout`
+  calls, no mocking) to confirm the tag-comparison logic and the checkout
+  itself genuinely work, not just that the mocks were self-consistent.
+  Confirmed: correctly detected v1.1.0 as newer than a v1.0.0 checkout,
+  and `apply_update()` actually changed the checked-out file to the newer
+  version's contents.
+- bandit flagged the subprocess usage here (B404/B603), as expected for
+  a file that legitimately runs external commands. Annotated with `#
+  nosec B404` / `# nosec B603` plus a plain-comment justification on the
+  line above each (bandit's nosec syntax only accepts bare test IDs after
+  `nosec`; extra trailing text produces harmless but noisy parser
+  warnings, learned this the first time through and reformatted). Also
+  fixed a real (if minor) finding: the restart call used partial paths
+  (`"sudo"`, `"systemctl"`) instead of absolute ones; switched to
+  `/usr/bin/sudo` / `/bin/systemctl` with existence checks and a fallback,
+  matching what the sudoers rule itself expects.
+- All 94 tests pass, bandit clean, shellcheck clean, verified live via a
+  real server boot plus the real-git-repo test described above.
+
 ## Test suite + CI (2026-07-27)
 Added a real pytest suite (`tests/`, 77 tests) and a GitHub Actions workflow
 (`.github/workflows/ci.yml`) that runs on every push/PR to `main`.
@@ -315,12 +376,22 @@ changes going forward — they currently duplicate the same content
 intentionally (one for GitHub readers, one for in-app).
 
 ## Open items / not yet built
-- Gumroad product not yet created — `GUMROAD_PRODUCT_ID` unset means the
-  app correctly runs in free-tier mode by default (tested, confirmed).
-- Installer script (`install.sh`, Pi-hole-style one-liner) — not built yet.
-- systemd timer for auto-*checking* updates — not built yet (need the repo
-  to actually be public/tagged first).
-- Dashboard "update available" UI — not built yet, same dependency.
+- Gumroad product not yet created — this note is now moot; the whole
+  license/pro-tier system was removed on 2026-07-26, see the entry above.
+- ~~Installer script~~ — built (`install.sh`), see the "One-line install"
+  entry above.
+- ~~systemd timer for auto-checking updates~~ — superseded by the in-app
+  "Check for updates" button, which checks on demand rather than on a
+  timer. A background auto-check (not auto-apply) could still be added
+  later if Ryan wants it, but isn't built.
+- ~~Dashboard "update available" UI~~ — built, see the "In-app updater"
+  entry above.
+- No tagged releases exist on the repo yet as of this log. `install.sh`
+  and `updater.py` both fall back to `main` gracefully when there are no
+  tags, but the real one-click-update value (pinned, reviewed releases
+  rather than whatever's on main) only kicks in once Ryan actually cuts a
+  first release tag. Worth flagging if a future session is asked to
+  debug "why did update pull main instead of a specific version."
 - Best Buy poller needs Ryan's own API key added to `.env` to function;
   currently reports `NO_API_KEY` status, which is correct/expected.
 - LGS directory (crowdsourced JSON of confirmed Shopify-backed local shops

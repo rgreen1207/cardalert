@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Card Alert - Edit product</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="board-header">
+  <div class="board-title">
+    <span class="lamp lamp--live"></span>
+    <h1>CARD ALERT - EDIT PRODUCT</h1>
+  </div>
+</header>
+
+{% include "_nav.html" %}
+
+<main>
+
+  {% if saved %}
+  <section class="panel panel--notice panel--saved">Saved.</section>
+  {% endif %}
+
+  <section class="panel panel--form">
+    <h2>Edit {{ product.name }}</h2>
+    <form method="post" action="/products/{{ product.id }}/edit" class="add-form">
+      <label>Name
+        <input type="text" name="name" value="{{ product.name }}" required>
+      </label>
+      <label>Game
+        <select name="game">
+          {% for g in games %}<option value="{{ g }}" {{ 'selected' if product.game == g else '' }}>{{ game_display[g] }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Target qty
+        <input type="number" name="target_qty" value="{{ product.target_qty }}" min="1">
+      </label>
+      <label>
+        <span class="label-row">Max price / MSRP ({{ currency_symbol }}) <span class="tip" title="This is the price you never want to pay over, across every retailer attached.">?</span></span>
+        <input type="number" name="msrp" step="0.01" value="{{ '%.2f'|format(product.display_msrp) if product.display_msrp is not none else '' }}" required>
+      </label>
+      <label>
+        <span class="label-row">Allow up to (%) over that price <span class="tip" title="0 = never alert above your max price.">?</span></span>
+        <input type="number" name="max_pct_over_msrp" value="{{ product.max_pct_over_msrp }}" step="1">
+      </label>
+      <label class="checkbox-field">
+        <span class="label-row">Alert via <span class="tip" title="Pick as many as you want.">?</span></span>
+        <span class="checkbox-group">
+          {% for c in push_channels %}
+          <label class="checkbox-option"><input type="checkbox" name="notify_channels" value="{{ c }}" {{ 'checked' if c in product.notify_channels_list else '' }}> {{ channel_display[c] }}</label>
+          {% endfor %}
+        </span>
+      </label>
+      <button type="submit" class="submit-wide">Save changes</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Retailers attached to this product</h2>
+    <table class="board-table">
+      <thead>
+        <tr><th>Retailer</th><th>Identifier</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for r in product.retailers %}
+        {% set st = r.last_status %}
+        <tr>
+          <td class="mono">{{ r.retailer_display }}</td>
+          <td class="mono">{{ r.identifier }}</td>
+          <td class="mono">{{ st.status_display if st else '—' }}</td>
+          <td>
+            <form method="post" action="/retailers/{{ r.id }}/remove" class="inline-form">
+              <button type="submit" class="danger">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">No retailers attached yet. Add one below.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2 class="add-retailer-heading">Add another retailer</h2>
+    <form method="post" action="/products/{{ product.id }}/retailers/add" class="add-form add-form--retailer">
+      <label>Retailer
+        <select name="retailer" required>
+          {% for r in retailers %}<option value="{{ r }}">{{ retailer_display[r] }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Identifier
+        <input type="text" name="identifier" placeholder="TCIN / SKU / product URL / shop handle" required>
+      </label>
+      <label>Product URL
+        <input type="text" name="product_url" placeholder="https://... (optional for some retailers)">
+      </label>
+      <button type="submit">Add retailer</button>
+    </form>
+  </section>
+
+  <p class="hint"><a href="/products">Back to Products</a></p>
+
+</main>
+</body>
+</html>

@@ -21,47 +21,51 @@
 
   <section class="panel panel--form">
     <h2>Add a product to watch</h2>
-    <form method="post" action="/items/add" class="add-form">
+    <form method="post" action="/products/add" class="add-form">
       <label>Name
         <input type="text" name="name" placeholder="Prismatic Evolutions SPC" required>
       </label>
       <label>Game
         <select name="game">
-          {% for g in games %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+          {% for g in games %}<option value="{{ g }}">{{ game_display[g] }}</option>{% endfor %}
         </select>
-      </label>
-      <label>Retailer
-        <select name="retailer" required>
-          {% for r in retailers %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
-        </select>
-      </label>
-      <label>
-        <span class="label-row">Identifier <span class="tip" title="target: numeric TCIN from the URL &#10;walmart/bn/pokemon_center/lgs_generic: full product URL &#10;bestbuy: SKU number &#10;amazon: ASIN or full product URL, only alerts when 'Ships from and sold by Amazon.com' &#10;lgs_shopify: shopdomain.com/products/handle &#10;See the Help page for details.">?</span></span>
-        <input type="text" name="identifier" placeholder="TCIN / SKU / product URL / shop handle" required>
-      </label>
-      <label>Product URL
-        <input type="text" name="product_url" placeholder="https://...">
       </label>
       <label>Target qty
         <input type="number" name="target_qty" value="1" min="1">
       </label>
       <label>
-        <span class="label-row">Max price / MSRP ({{ currency_symbol }}) <span class="tip" title="This is the price you never want to pay over. If a restock's price is above this, it will NOT alert you.">?</span></span>
+        <span class="label-row">Max price / MSRP ({{ currency_symbol }}) <span class="tip" title="This is the price you never want to pay over, across every retailer attached below. If a restock's price is above this, it will NOT alert you.">?</span></span>
         <input type="number" name="msrp" step="0.01" placeholder="119.99" required>
       </label>
       <label>
-        <span class="label-row">Allow up to (%) over that price <span class="tip" title="0 = never alert above your max price. e.g. 10 = allow up to 10% over before it's ignored. Anything past this is silently skipped, not alerted.">?</span></span>
+        <span class="label-row">Allow up to (%) over that price <span class="tip" title="0 = never alert above your max price. e.g. 10 = allow up to 10% over before it's ignored.">?</span></span>
         <input type="number" name="max_pct_over_msrp" value="0" step="1">
       </label>
       <label class="checkbox-field">
-        <span class="label-row">Alert via <span class="tip" title="Pick as many as you want. You'll get the alert on every channel checked, plus it always shows on the Dashboard regardless. Set credentials for each on the Settings page first.">?</span></span>
+        <span class="label-row">Alert via <span class="tip" title="Pick as many as you want. You'll get the alert on every channel checked, whichever retailer triggers it, plus it always shows on the Dashboard regardless.">?</span></span>
         <span class="checkbox-group">
           {% for c in push_channels %}
-          <label class="checkbox-option"><input type="checkbox" name="notify_channels" value="{{ c }}"> {{ c }}</label>
+          <label class="checkbox-option"><input type="checkbox" name="notify_channels" value="{{ c }}"> {{ channel_display[c] }}</label>
           {% endfor %}
         </span>
       </label>
-      <button type="submit">Add to watchlist</button>
+
+      <div class="retailer-rows-wrapper">
+        <span class="label-row">Retailers to watch <span class="tip" title="Attach as many retailers as you want. This product alerts you the moment ANY one of them has it in stock, each checked independently.">?</span></span>
+        <div id="retailer-rows">
+          <div class="retailer-row">
+            <select name="retailer">
+              {% for r in retailers %}<option value="{{ r }}">{{ retailer_display[r] }}</option>{% endfor %}
+            </select>
+            <input type="text" name="identifier" placeholder="TCIN / SKU / product URL / shop handle">
+            <input type="text" name="product_url" placeholder="Product URL (optional for some retailers)">
+            <button type="button" class="remove-retailer-row" title="Remove this retailer">×</button>
+          </div>
+        </div>
+        <button type="button" id="add-retailer-row">+ Add another retailer</button>
+      </div>
+
+      <button type="submit" class="submit-wide">Add to watchlist</button>
     </form>
     <p class="hint">
       Identifier format by retailer. target: numeric TCIN from the product URL ·
@@ -83,44 +87,58 @@
 
   <section class="panel">
     <h2>Your watchlist</h2>
+    {% if fx_stale %}
+    <p class="hint fx-note">Exchange rates couldn't be freshly fetched, prices below may be approximate.</p>
+    {% endif %}
     <table class="board-table">
       <thead>
         <tr>
           <th>Product</th>
           <th>Game</th>
-          <th>Retailer</th>
+          <th>Retailers</th>
           <th>Max price</th>
-          <th>Allowed over (%)</th>
           <th>Qty left / target</th>
           <th>Alert via</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        {% for item in items %}
-        <tr class="{{ 'row--paused' if not item.active else '' }}">
-          <td>{{ item.name }}</td>
-          <td class="mono">{{ item.game }}</td>
-          <td class="mono">{{ item.retailer }}</td>
-          <td class="mono">{{ currency_symbol }}{{ '%.2f'|format(item.msrp) if item.msrp else '—' }}</td>
-          <td class="mono">{{ item.max_pct_over_msrp }}%</td>
-          <td class="mono">{{ item.remaining_qty }} / {{ item.target_qty }}</td>
-          <td class="mono">{{ item.notify_channels_list|join(' + ') if item.notify_channels_list else 'dashboard only' }}</td>
+        {% for product in products %}
+        <tr class="{{ 'row--paused' if not product.active else '' }}">
+          <td>{{ product.name }}</td>
+          <td class="mono">{{ product.game_display }}</td>
+          <td>
+            <div class="retailer-pills">
+              {% for r in product.retailers %}
+              {% set st = r.last_status %}
+              {% set r_in_stock = st and st.in_stock and not st.ignored_over_price %}
+              <span class="retailer-pill {{ 'pill--live' if r_in_stock else '' }}">
+                <span class="pill-dot"></span>{{ r.retailer_display }}
+              </span>
+              {% else %}
+              <span class="empty">None attached</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td class="mono">{% if product.display_msrp is not none %}{{ currency_symbol }}{{ '%.2f'|format(product.display_msrp) }}{% else %}—{% endif %}</td>
+          <td class="mono">{{ product.remaining_qty }} / {{ product.target_qty }}</td>
+          <td class="mono">{{ product.notify_channels_list|join(' + ') if product.notify_channels_list else 'Dashboard only' }}</td>
           <td class="row-actions">
-            <form method="post" action="/items/{{ item.id }}/mark_purchased" class="inline-form">
+            <form method="post" action="/products/{{ product.id }}/mark_purchased" class="inline-form">
               <input type="number" name="qty" value="1" min="1" class="qty-input">
-              <button type="submit" title="Log a manual purchase">bought</button>
+              <button type="submit" title="Log a manual purchase">Bought</button>
             </form>
-            {% if item.active %}
-            <form method="post" action="/items/{{ item.id }}/pause" class="inline-form"><button type="submit">pause</button></form>
+            <a href="/products/{{ product.id }}/edit" class="edit-link">Edit</a>
+            {% if product.active %}
+            <form method="post" action="/products/{{ product.id }}/pause" class="inline-form"><button type="submit">Pause</button></form>
             {% else %}
-            <form method="post" action="/items/{{ item.id }}/resume" class="inline-form"><button type="submit">resume</button></form>
+            <form method="post" action="/products/{{ product.id }}/resume" class="inline-form"><button type="submit">Resume</button></form>
             {% endif %}
-            <form method="post" action="/items/{{ item.id }}/delete" class="inline-form"><button type="submit" class="danger">remove</button></form>
+            <form method="post" action="/products/{{ product.id }}/delete" class="inline-form"><button type="submit" class="danger">Remove</button></form>
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">No products added yet. Use the form above.</td></tr>
+        <tr><td colspan="7" class="empty">No products added yet. Use the form above.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -143,6 +161,25 @@
     out.textContent = data.is_shopify
       ? `✅ Shopify-backed. Use "lgs_shopify" with ${domain}/products/<handle>`
       : `❌ Not detected as Shopify. Try "lgs_generic" with the full product URL instead.`;
+  });
+
+  const retailerRows = document.getElementById('retailer-rows');
+  const rowTemplate = retailerRows.querySelector('.retailer-row').cloneNode(true);
+
+  function wireRemoveButton(row) {
+    row.querySelector('.remove-retailer-row').addEventListener('click', () => {
+      if (retailerRows.querySelectorAll('.retailer-row').length > 1) {
+        row.remove();
+      }
+    });
+  }
+  wireRemoveButton(retailerRows.querySelector('.retailer-row'));
+
+  document.getElementById('add-retailer-row').addEventListener('click', () => {
+    const newRow = rowTemplate.cloneNode(true);
+    newRow.querySelectorAll('input').forEach(input => input.value = '');
+    retailerRows.appendChild(newRow);
+    wireRemoveButton(newRow);
   });
 </script>
 </body>

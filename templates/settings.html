@@ -28,6 +28,17 @@
     <a href="{{ donate_url }}" target="_blank" class="upgrade-link">consider supporting development on Ko-fi</a>.
   </section>
 
+  <section class="panel">
+    <h2>Software updates</h2>
+    <p class="hint">Currently running: <span class="mono" id="current-version">{{ current_version }}</span></p>
+    <div class="test-row">
+      <button type="button" id="check-update-btn">Check for updates</button>
+      <button type="button" id="apply-update-btn" style="display:none;">Update now</button>
+      <span id="update-output" class="test-output"></span>
+    </div>
+    <p class="hint">Updating pulls the latest release, reinstalls dependencies, and restarts the app. It takes a few seconds, and this page will stop responding briefly while it restarts.</p>
+  </section>
+
   <form method="post" action="/settings/save">
 
     <section class="panel">
@@ -40,6 +51,15 @@
     <section class="panel">
       <h2>Discord <span class="cost-tag cost-tag--free">free</span></h2>
       <input type="password" name="discord_webhook_url" value="{{ values.discord_webhook_url }}" placeholder="https://discord.com/api/webhooks/..." class="wide-input" autocomplete="off">
+      <div class="mention-row">
+        <select name="discord_mention_type" class="mention-select">
+          <option value="" {{ 'selected' if values.discord_mention_type == '' else '' }}>No mention</option>
+          <option value="user" {{ 'selected' if values.discord_mention_type == 'user' else '' }}>Mention a user</option>
+          <option value="role" {{ 'selected' if values.discord_mention_type == 'role' else '' }}>Mention a role</option>
+        </select>
+        <input type="text" name="discord_mention_id" value="{{ values.discord_mention_id }}" placeholder="Discord user or role ID" class="mention-id-input">
+      </div>
+      <p class="hint">Right-click a user or role in Discord (with Developer Mode on, under Settings → Advanced) and choose "Copy ID." Every alert will start with that mention.</p>
       <div class="test-row">
         <button type="button" id="test-discord-btn">Send test alert</button>
         <span id="test-discord-output" class="test-output"></span>
@@ -91,8 +111,52 @@
     const res = await fetch('/settings/test-discord', { method: 'POST' });
     const data = await res.json();
     out.textContent = data.ok
-      ? '✅ Sent. Check your Discord channel.'
-      : `❌ ${data.error || 'Failed to send. Check the webhook URL is saved and correct.'}`;
+      ? `✅ Sent (status ${data.status}). Check your Discord channel.`
+      : `❌ ${data.detail || 'Failed to send. Check the webhook URL is saved and correct.'}`;
+  });
+
+  const checkBtn = document.getElementById('check-update-btn');
+  const applyBtn = document.getElementById('apply-update-btn');
+  const updateOut = document.getElementById('update-output');
+
+  checkBtn.addEventListener('click', async () => {
+    updateOut.textContent = 'Checking...';
+    applyBtn.style.display = 'none';
+    try {
+      const res = await fetch('/settings/check-update');
+      const data = await res.json();
+      if (data.error) {
+        updateOut.textContent = `❌ ${data.error}`;
+      } else if (data.update_available) {
+        updateOut.textContent = `Update available: ${data.current} → ${data.latest}`;
+        applyBtn.style.display = 'inline-block';
+      } else {
+        updateOut.textContent = '✅ Already up to date.';
+      }
+    } catch (e) {
+      updateOut.textContent = '❌ Could not check for updates.';
+    }
+  });
+
+  applyBtn.addEventListener('click', async () => {
+    applyBtn.disabled = true;
+    updateOut.textContent = 'Updating... this restarts the app, give it about 10 seconds.';
+    try {
+      const res = await fetch('/settings/apply-update', { method: 'POST' });
+      const data = await res.json();
+      if (!data.ok) {
+        updateOut.textContent = `❌ ${data.error}`;
+        applyBtn.disabled = false;
+        return;
+      }
+      updateOut.textContent = data.message + ' Reloading shortly...';
+      setTimeout(() => location.reload(), 8000);
+    } catch (e) {
+      // A fetch error here is expected: the app is mid-restart and the
+      // connection just dropped. Treat it as success and reload anyway.
+      updateOut.textContent = 'Restarting... reloading shortly.';
+      setTimeout(() => location.reload(), 8000);
+    }
   });
 </script>
 </body>

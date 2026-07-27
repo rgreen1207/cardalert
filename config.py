@@ -26,6 +26,8 @@ _KEYS = {
     "twilio_to_number": ("TWILIO_TO_NUMBER", ""),
     "bestbuy_api_key": ("BESTBUY_API_KEY", ""),
     "currency": ("CARDALERT_CURRENCY", "USD"),
+    "discord_mention_type": ("DISCORD_MENTION_TYPE", ""),  # "" | "user" | "role"
+    "discord_mention_id": ("DISCORD_MENTION_ID", ""),
 }
 
 CURRENCY_SYMBOLS = {
