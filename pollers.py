@@ -69,13 +69,24 @@ def discover_target_api_key(candidate_tcins=None):
     return None
 
 
+# Confirmed from a real response, not a guess: Target's redsky API
+# responds to a block with a structured JSON captcha challenge
+# ("captchaRelativeURL"/"captchaAbsoluteURL" pointing to
+# /captcha?trackingId=..."), not any PerimeterX-page HTML. This is
+# unambiguous proof it's an anti-bot mechanism specifically — a wrong or
+# expired API key produces an "unauthorized" error, not a captcha
+# challenge — so this gets its own, more specific status than the
+# broader anti-bot guess below.
+_CAPTCHA_MARKERS = ["captchaRelativeURL", "captchaAbsoluteURL", "/captcha?trackingId"]
+
 # Substrings that show up in known bot-mitigation block/challenge pages
-# (PerimeterX/HUMAN Security being the one visibly present on Target's own
-# site, per its "humanSensor" script and _pxhd cookie — confirmed by
-# inspecting real page source, not assumed). Checked case-insensitively
-# against the response body. This list is inherently incomplete and will
-# go stale if a vendor changes their block page's wording — it's a
-# best-effort signal for the console/API detail, not a guarantee.
+# more generally (PerimeterX/HUMAN Security being visibly present on
+# Target's own product *pages*, per their "humanSensor" script and
+# _pxhd cookie — confirmed by inspecting real page source). Kept
+# separate from _CAPTCHA_MARKERS above since the API's actual block
+# format turned out to look nothing like a PerimeterX HTML page — this
+# list is best-effort for anything that doesn't match the confirmed
+# captcha format, and will go stale if a vendor changes wording.
 _ANTIBOT_MARKERS = [
     "perimeterx", "px-captcha", "_px", "human security",
     "access to this page has been denied", "please verify you are a human",
@@ -85,14 +96,17 @@ _ANTIBOT_MARKERS = [
 
 def _classify_block_response(r):
     """Returns (raw_status, error_detail) for a 401/403/429 response,
-    distinguishing an anti-bot block page from a generic rejection where
+    distinguishing an anti-bot block from a generic rejection where
     possible — these call for genuinely different responses (an anti-bot
     block isn't something a new key fixes), so guessing from the status
     code alone isn't good enough. Always keeps the actual response body
     (truncated) in error_detail so this can be verified by hand too."""
-    body_lower = r.text.lower()
+    body = r.text
+    body_lower = body.lower()
+    detail = f"HTTP {r.status_code} from Target: {body[:500]}"
+    if any(m.lower() in body_lower for m in _CAPTCHA_MARKERS):
+        return "CAPTCHA_REQUIRED", detail
     matched = [m for m in _ANTIBOT_MARKERS if m in body_lower]
-    detail = f"HTTP {r.status_code} from Target: {r.text[:500]}"
     if matched:
         return "BLOCKED_BY_ANTIBOT", f"Matched anti-bot marker(s) {matched}. {detail}"
     if r.status_code == 429:

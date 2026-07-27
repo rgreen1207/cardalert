@@ -51,6 +51,7 @@ STATUS_LABELS = {
     "UNKNOWN": "Unknown",
     "BLOCKED_OR_KEY_INVALID": "Blocked by retailer",
     "BLOCKED_BY_ANTIBOT": "Blocked by anti-bot protection",
+    "CAPTCHA_REQUIRED": "Blocked — captcha required",
     "RATE_LIMITED": "Rate limited, will retry",
     "UNEXPECTED_RESPONSE": "Unexpected response",
 }
