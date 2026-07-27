@@ -85,6 +85,26 @@ def test_target_rate_limited_returns_distinct_status(monkeypatch, fake_response)
     assert "Too many requests" in result["error_detail"]
 
 
+def test_target_403_with_real_captcha_response_is_classified_correctly(monkeypatch, fake_response):
+    """Uses the actual response body observed from Target's redsky API
+    in real use (a 403 with a structured JSON captcha challenge), not a
+    guess about what a block page might contain. This is unambiguous
+    proof it's an anti-bot mechanism specifically — a wrong or expired
+    key produces an 'unauthorized' error, not a captcha challenge — so
+    it gets its own distinct status rather than the generic anti-bot
+    guess, which was based on PerimeterX HTML page wording that turned
+    out not to match this endpoint's actual block format at all."""
+    real_body = (
+        '{\n  "captchaRelativeURL":"/captcha?trackingId=669463bf-9952-444e-992a-ac2d186c599c",\n'
+        '  "captchaAbsoluteURL":"https://redsky.target.com/captcha?trackingId=669463bf-9952-444e-992a-ac2d186c599c"\n}'
+    )
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(status_code=403, text=real_body))
+    result = pollers.check_target("1012055696")
+    assert result["raw_status"] == "CAPTCHA_REQUIRED"
+    assert "captchaRelativeURL" in result["error_detail"]
+    assert result["in_stock"] is False
+
+
 def test_target_403_with_perimeterx_marker_is_classified_as_antibot(monkeypatch, fake_response):
     """Distinguishing a real finding from a guess: PerimeterX's own
     scripts (visible on Target's actual page source — a 'humanSensor'

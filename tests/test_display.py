@@ -22,6 +22,7 @@ def test_status_label_distinguishes_blocked_from_generic_error():
     stock' — that distinction is the whole point of the fix."""
     assert display.status_label("BLOCKED_OR_KEY_INVALID") == "Blocked by retailer"
     assert display.status_label("BLOCKED_BY_ANTIBOT") == "Blocked by anti-bot protection"
+    assert display.status_label("CAPTCHA_REQUIRED") == "Blocked — captcha required"
     assert display.status_label("RATE_LIMITED") == "Rate limited, will retry"
     assert display.status_label("UNEXPECTED_RESPONSE") == "Unexpected response"
     assert display.status_label("NOT_FOUND") == "Not found"

@@ -7,6 +7,20 @@ match git tags of the same name (`v0.0.3`, etc.) — the in-app updater
 release means both: add an entry here, then tag the commit.
 
 ## [Unreleased]
+### Fixed
+- Target's anti-bot detection was checking for the wrong markers —
+  built from a guess about what a PerimeterX block page's HTML might
+  say, but a real 403 response shared by a user showed Target's redsky
+  API actually responds with a structured JSON captcha challenge
+  (`captchaRelativeURL`/`captchaAbsoluteURL` pointing to
+  `/captcha?trackingId=...`), which matched none of those markers and
+  fell through to the generic "Blocked by retailer" label. Added
+  detection for the real, confirmed format as its own status,
+  "Blocked — captcha required" — unambiguous proof it's anti-bot
+  detection specifically, since a bad key produces an "unauthorized"
+  error, not a captcha challenge. Test built directly from the real
+  response body, not a synthetic guess.
+
 ### Added
 - Target's poller now distinguishes an anti-bot block from a generic
   key/rate-limit rejection, based on real evidence (checked the response
