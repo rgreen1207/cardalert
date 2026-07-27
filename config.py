@@ -50,6 +50,35 @@ def all_values() -> dict:
     return {k: get(k) for k in _KEYS}
 
 
+# --- Dashboard password (stored as salted hash, never plaintext, DB-only) ---
+import hashlib
+import secrets as _secrets
+
+
+def set_dashboard_password(plaintext: str):
+    if not plaintext:
+        db.set_setting("dashboard_password_hash", "")
+        db.set_setting("dashboard_password_salt", "")
+        return
+    salt = _secrets.token_hex(16)
+    digest = hashlib.sha256((salt + plaintext).encode()).hexdigest()
+    db.set_setting("dashboard_password_salt", salt)
+    db.set_setting("dashboard_password_hash", digest)
+
+
+def check_dashboard_password(plaintext: str) -> bool:
+    salt = db.get_setting("dashboard_password_salt", "")
+    stored_hash = db.get_setting("dashboard_password_hash", "")
+    if not stored_hash:
+        return False
+    digest = hashlib.sha256((salt + plaintext).encode()).hexdigest()
+    return _secrets.compare_digest(digest, stored_hash)
+
+
+def dashboard_password_is_set() -> bool:
+    return bool(db.get_setting("dashboard_password_hash", ""))
+
+
 def is_setup_complete() -> bool:
     return db.get_setting("setup_complete") == "1"
 

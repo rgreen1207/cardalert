@@ -30,16 +30,31 @@ if ! command -v git &>/dev/null; then
   exit 1
 fi
 
-if [ -d "$INSTALL_DIR" ]; then
-  echo "Found existing install at $INSTALL_DIR — updating instead of re-cloning."
-  cd "$INSTALL_DIR"
+checkout_latest_release() {
+  # Prefer the latest tagged release over main — this means an existing
+  # install only picks up a new version when you explicitly cut a release,
+  # not on every commit that happens to land on main.
   git fetch --tags --quiet
-  git checkout main --quiet
-  git pull --quiet
+  LATEST_TAG="$(git tag --list --sort=-v:refname | head -n1)"
+  if [ -n "$LATEST_TAG" ]; then
+    git checkout "$LATEST_TAG" --quiet
+    echo "Using release ${LATEST_TAG}"
+  else
+    echo "No tagged releases found yet — using main (expect this to change once releases exist)."
+    git checkout main --quiet
+    git pull --quiet
+  fi
+}
+
+if [ -d "$INSTALL_DIR" ]; then
+  echo "Found existing install at $INSTALL_DIR — checking for updates."
+  cd "$INSTALL_DIR"
+  checkout_latest_release
 else
   echo "Cloning into $INSTALL_DIR ..."
   git clone --quiet "$REPO_URL" "$INSTALL_DIR"
   cd "$INSTALL_DIR"
+  checkout_latest_release
 fi
 
 echo "Creating virtual environment ..."
@@ -52,6 +67,7 @@ pip install --quiet -r requirements.txt
 if [ ! -f .env ]; then
   cp .env.example .env
 fi
+chmod 600 .env
 
 echo "Setting up systemd service ..."
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"

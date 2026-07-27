@@ -4,6 +4,7 @@ Single file DB, no ORM needed at this scale.
 """
 import sqlite3
 import time
+import os
 from contextlib import contextmanager
 
 DB_PATH = "watchdata.db"
@@ -87,6 +88,10 @@ def init_db():
         if row is None:
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_SCHEMA_VERSION,))
         _run_migrations(conn)
+    try:
+        os.chmod(DB_PATH, 0o600)  # DB now stores credentials via the settings table — owner-read-only
+    except OSError:
+        pass
 
 
 def _run_migrations(conn):

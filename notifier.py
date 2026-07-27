@@ -19,7 +19,7 @@ def send_discord(message: str):
     try:
         requests.post(url, json={"content": message}, timeout=8)
     except requests.RequestException as e:
-        print("[notifier] Discord send failed:", e)
+        print("[notifier] Discord send failed:", type(e).__name__)
 
 
 def send_ntfy(message: str, title: str = "Card Alert"):
@@ -35,7 +35,7 @@ def send_ntfy(message: str, title: str = "Card Alert"):
             timeout=8,
         )
     except requests.RequestException as e:
-        print("[notifier] ntfy send failed:", e)
+        print("[notifier] ntfy send failed:", type(e).__name__)
 
 
 def send_pushover(message: str, title: str = "Card Alert"):
@@ -51,7 +51,7 @@ def send_pushover(message: str, title: str = "Card Alert"):
             timeout=8,
         )
     except requests.RequestException as e:
-        print("[notifier] Pushover send failed:", e)
+        print("[notifier] Pushover send failed:", type(e).__name__)
 
 
 def send_sms(message: str):
@@ -69,7 +69,7 @@ def send_sms(message: str):
             timeout=8,
         )
     except requests.RequestException as e:
-        print("[notifier] SMS send failed:", e)
+        print("[notifier] SMS send failed:", type(e).__name__)
 
 
 def dispatch(message: str, channel: str = "discord"):

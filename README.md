@@ -148,6 +148,52 @@ Pick a `game` per watchlist item: `pokemon`, `mtg`, `yugioh`, `onepiece`, or
 Hardcoded to Monday–Thursday, 8am–1pm PST, every 10 minutes, skipped
 entirely outside that window. Change in `scheduler.py` if needed.
 
+## Security
+
+A security review (bandit static analysis + manual review) turned up and
+fixed the following, and flags a couple of things that are architectural
+tradeoffs rather than bugs:
+
+**Fixed:**
+- Credential fields (Discord webhook, API tokens, license key) now render
+  as masked `type="password"` inputs on Setup/Settings, not plain text.
+  Note this masks the on-screen display, not the page source — anyone with
+  direct access to view-source or your browser's saved form data could
+  still see the value. The real protection is the dashboard password below.
+- Added an optional dashboard password (Settings → "Dashboard password").
+  Stored as a salted SHA-256 hash, never plaintext, checked via a
+  constant-time comparison. **Off by default** — Card Alert has no login
+  out of the box, same as before, so set one if this device is reachable by
+  anyone other than you.
+- `install.sh` updates now pull the latest git **tag**, not `main` directly
+  — an existing install won't auto-pick-up an unreviewed commit.
+- `.env` is chmod'd to `600` on install; `watchdata.db` is chmod'd to `600`
+  on first run (it now holds settings-page credentials too).
+- Notification-send failures log only the exception type, not the full
+  exception string, since that string can include the failing URL (which
+  may embed a webhook path or token).
+
+**Verified, not changed (already fine):**
+- All SQL is parameterized (`?` placeholders) — no injection surface.
+- Jinja2 autoescaping is on — tested a `<script>` payload through the
+  settings form and confirmed it comes back HTML-escaped, not executed.
+- No `eval`/`exec`/shell-string-formatting anywhere in the codebase.
+
+**Architectural tradeoffs, not bugs — worth understanding:**
+- The retailer/LGS pollers fetch whatever URL you give them — that's the
+  point, it's how stock-checking works. It also means anyone who can reach
+  the app (once past the optional password) can make your Pi issue HTTP
+  requests to arbitrary hosts. Setting a dashboard password is the
+  mitigation; don't port-forward this to the public internet without one.
+- HTTP Basic auth (used for the dashboard password) has no CSRF protection
+  of its own — browsers resend credentials automatically. This is a
+  reasonable tradeoff for a personal LAN tool; if you expose this beyond
+  your LAN, put it behind a VPN (e.g. Tailscale) rather than relying on the
+  password alone.
+- Self-hosted git-pull updates carry inherent supply-chain trust in
+  whoever controls the repo — pinning to tags (above) narrows this but
+  doesn't eliminate it.
+
 ## Licensing
 Source-available (see `LICENSE.md`): free to read, self-host, and modify
 for your own use. Not licensed for resale, hosted-service redistribution, or

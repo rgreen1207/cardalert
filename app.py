@@ -14,6 +14,8 @@ app = FastAPI(title="Card Alert")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+import base64
+
 _EXEMPT_FROM_SETUP_REDIRECT = {"/setup", "/setup/save", "/setup/skip"}
 
 
@@ -27,6 +29,27 @@ async def require_setup(request: Request, call_next):
     ):
         return RedirectResponse("/setup")
     return await call_next(request)
+
+
+@app.middleware("http")
+async def require_dashboard_password(request: Request, call_next):
+    if not config.dashboard_password_is_set():
+        return await call_next(request)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            _, _, supplied_password = decoded.partition(":")
+            if config.check_dashboard_password(supplied_password):
+                return await call_next(request)
+        except (ValueError, UnicodeDecodeError):
+            pass  # malformed Authorization header — falls through to 401 below
+    from starlette.responses import Response
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="Card Alert"'},
+        content="Password required.",
+    )
 
 
 @app.on_event("startup")
@@ -94,6 +117,7 @@ def setup_save(
     twilio_from_number: str = Form(""),
     twilio_to_number: str = Form(""),
     bestbuy_api_key: str = Form(""),
+    dashboard_password: str = Form(""),
 ):
     for key, value in {
         "discord_webhook_url": discord_webhook_url,
@@ -108,6 +132,8 @@ def setup_save(
     }.items():
         if value:
             config.set(key, value)
+    if dashboard_password:
+        config.set_dashboard_password(dashboard_password)
     config.mark_setup_complete()
     return RedirectResponse("/products", status_code=303)
 
@@ -142,6 +168,7 @@ def settings_save(
     bestbuy_api_key: str = Form(""),
     gumroad_product_id: str = Form(""),
     cardalert_license_key: str = Form(""),
+    dashboard_password: str = Form(""),
 ):
     for key, value in {
         "discord_webhook_url": discord_webhook_url,
@@ -157,6 +184,10 @@ def settings_save(
         "cardalert_license_key": cardalert_license_key,
     }.items():
         config.set(key, value)
+    if dashboard_password:
+        # blank field on the settings page means "leave unchanged" — the
+        # stored hash is never rendered back into the form to fill this in
+        config.set_dashboard_password(dashboard_password)
     return RedirectResponse("/settings?saved=1", status_code=303)
 
 
