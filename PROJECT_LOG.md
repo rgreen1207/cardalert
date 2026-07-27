@@ -115,6 +115,44 @@ sightings extrapolated forward. None of this requires anything off-limits —
 `poll_forecasts` + `db.restock_pattern` are our own versions of #1 and #4,
 built entirely from public/own data.
 
+## Security audit (2026-07-26)
+Ran bandit + manual review after Ryan asked for a security audit. Findings
+and fixes — **keep these constraints in mind for any future change**:
+- Fixed: credential fields now `type="password"` in setup.html/settings.html
+  (masks on-screen display only — page source still contains the value if
+  something is stored via config.py; the real control is the new dashboard
+  password, not field masking).
+- Fixed: added optional dashboard password. `config.set_dashboard_password`/
+  `check_dashboard_password` — salted SHA-256, `secrets.compare_digest` for
+  timing-safe check, **never stores plaintext**. New `require_dashboard_password`
+  middleware in `app.py` (HTTP Basic). Off by default (`dashboard_password_hash`
+  empty = no auth, matches prior behavior). **Any new route added to app.py
+  is automatically covered by this middleware — don't add a route-specific
+  bypass without a real reason.**
+- Fixed: `install.sh` now checks out the latest git tag on update instead of
+  pulling `main` directly — prevents unreviewed commits on main from
+  auto-deploying to existing installs. Falls back to main only if no tags
+  exist yet (repo has none as of this log — **once a first release tag is
+  cut, verify this path actually triggers correctly**).
+- Fixed: `.env` chmod 600 in install.sh; `watchdata.db` chmod 600 in
+  `db.init_db()` — both now hold real credentials (DB via the settings
+  table added for the setup wizard).
+- Fixed: notifier.py exception logging trimmed to `type(e).__name__` only,
+  not the full exception string (which can embed a webhook URL/token).
+- Verified clean, no change needed: bandit finds zero issues after fixes;
+  all SQL parameterized; Jinja2 autoescape confirmed on via direct test
+  (posted a `<script>` payload through settings, confirmed it round-trips
+  HTML-escaped).
+- Documented as accepted architectural tradeoffs (not fixed, by design):
+  pollers fetch arbitrary user-supplied URLs (that's the feature) — real
+  mitigation is the dashboard password gating who can add watch items at
+  all; HTTP Basic has no CSRF protection (acceptable for a personal LAN
+  tool, recommend VPN/Tailscale over relying on the password alone if ever
+  exposed beyond LAN); self-hosted git-pull inherently trusts whoever
+  controls the repo, tag-pinning narrows but doesn't eliminate this.
+Full writeup lives in README.md's new "Security" section — keep that in
+sync with this log if either changes.
+
 ## Notification channels — user-selectable (added 2026-07-26)
 Ryan wanted a choice of push/SMS providers rather than one fixed option.
 Added Pushover alongside the existing Discord/ntfy/Twilio-SMS: `send_pushover`
