@@ -128,6 +128,63 @@ def test_target_completely_empty_response_does_not_crash(monkeypatch, fake_respo
     assert result["raw_status"] == "NOT_FOUND"
 
 
+def test_target_uses_custom_api_key_when_configured(monkeypatch, fake_response):
+    """If a user configures their own Target API key, it should be used
+    in the actual request instead of the shared default — that's the
+    whole point of letting them supply one."""
+    import config
+    config.set("target_api_key", "my-own-key-123")
+    captured_url = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured_url["url"] = url
+        return fake_response(json_data={"data": {"product": {
+            "price": {"current_retail": 10.0},
+            "fulfillment": {"shipping_options": {"availability_status": "IN_STOCK"}},
+        }}})
+
+    monkeypatch.setattr(pollers.requests, "get", fake_get)
+    pollers.check_target("1011209279")
+    assert "key=my-own-key-123" in captured_url["url"]
+
+
+def test_target_falls_back_to_shared_key_when_none_configured(monkeypatch, fake_response):
+    import config
+    config.set("target_api_key", "")
+    captured_url = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured_url["url"] = url
+        return fake_response(json_data={"data": {"product": {
+            "price": {"current_retail": 10.0},
+            "fulfillment": {"shipping_options": {"availability_status": "IN_STOCK"}},
+        }}})
+
+    monkeypatch.setattr(pollers.requests, "get", fake_get)
+    pollers.check_target("1011209279")
+    assert "key=9f36aeafbe60771e321a7cc95a78140772ab3e96" in captured_url["url"]
+
+
+def test_target_sends_browser_like_headers(monkeypatch, fake_response):
+    """Regression guard: the request previously sent only a bare
+    User-Agent, missing the Origin/Referer/Accept headers a real page
+    load includes."""
+    captured_headers = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured_headers.update(headers or {})
+        return fake_response(json_data={"data": {"product": {
+            "price": {"current_retail": 10.0},
+            "fulfillment": {"shipping_options": {"availability_status": "IN_STOCK"}},
+        }}})
+
+    monkeypatch.setattr(pollers.requests, "get", fake_get)
+    pollers.check_target("1011209279")
+    assert captured_headers.get("Origin") == "https://www.target.com"
+    assert captured_headers.get("Accept") == "application/json"
+    assert "Referer" in captured_headers
+
+
 def test_target_in_stock(monkeypatch, fake_response):
     payload = {
         "data": {
