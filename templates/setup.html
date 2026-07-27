@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Card Alert — Setup</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="board-header">
+  <div class="board-title">
+    <span class="lamp lamp--live"></span>
+    <h1>WELCOME TO CARD ALERT</h1>
+  </div>
+</header>
+
+<main class="setup-main">
+
+  <section class="panel">
+    <p class="setup-intro">
+      Card Alert works right away with no setup — you'll see restock alerts
+      right here on the dashboard. The steps below are optional: they let
+      alerts reach you on Discord, your phone, or by text instead of only
+      showing up when you have the dashboard open. Skip anything you don't
+      want — you can always come back and add it later from
+      <strong>Settings</strong>.
+    </p>
+  </section>
+
+  <form method="post" action="/setup/save">
+
+    <section class="panel">
+      <h2>Discord <span class="cost-tag cost-tag--free">free</span></h2>
+      <p class="hint">Server Settings → Integrations → Webhooks → New Webhook → copy the URL.</p>
+      <input type="text" name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/..." class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>ntfy push notifications <span class="cost-tag cost-tag--free">free, no signup</span></h2>
+      <p class="hint">Install the ntfy app, subscribe to a topic name you make up (treat it like a password), enter that same name here.</p>
+      <input type="text" name="ntfy_topic" placeholder="cardalert-yourname-x92q7" class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>Pushover <span class="cost-tag cost-tag--paid">~$5 one-time, paid to Pushover</span></h2>
+      <p class="hint">Create a free account at pushover.net, install the app, copy your User Key and create an Application for an API Token.</p>
+      <input type="text" name="pushover_user_key" placeholder="User Key" class="wide-input">
+      <input type="text" name="pushover_app_token" placeholder="API Token" class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>SMS via Twilio <span class="cost-tag cost-tag--paid">your own account, fractions of a cent/text</span></h2>
+      <p class="hint">Free Twilio account, copy your Account SID + Auth Token, buy a phone number.</p>
+      <input type="text" name="twilio_account_sid" placeholder="Account SID" class="wide-input">
+      <input type="text" name="twilio_auth_token" placeholder="Auth Token" class="wide-input">
+      <input type="text" name="twilio_from_number" placeholder="Twilio number, e.g. +12065551234" class="wide-input">
+      <input type="text" name="twilio_to_number" placeholder="Your phone, e.g. +12065559876" class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>Best Buy polling <span class="cost-tag cost-tag--free">free API key</span></h2>
+      <p class="hint">Only needed if you plan to watch Best Buy items — free key from developer.bestbuy.com.</p>
+      <input type="text" name="bestbuy_api_key" placeholder="Best Buy API key" class="wide-input">
+    </section>
+
+    <div class="setup-actions">
+      <button type="submit" class="primary">Save and continue</button>
+      <button type="submit" formaction="/setup/skip" class="secondary">Skip for now</button>
+    </div>
+  </form>
+
+</main>
+</body>
+</html>

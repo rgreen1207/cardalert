@@ -49,8 +49,10 @@ needed.
 
 ## Notification setup
 
-Pick any combination — set the `notify_channel` per watchlist item on the
-dashboard once the credentials below are in your `.env`.
+Easiest path: use the setup wizard on first visit, or the **Settings** page
+any time after — both let you paste these credentials straight into the
+browser, no file editing or restart required. The steps below are the same
+info, for reference or if you're configuring via `.env` instead.
 
 ### Discord (free, always available)
 1. In your Discord server: Server Settings → Integrations → Webhooks → New Webhook.
@@ -91,22 +93,31 @@ That's it — no account, no cost, ever.
 ## Setup
 
 ```bash
-git clone <repo-url> cardalert
+curl -sSL https://raw.githubusercontent.com/rgreen1207/cardalert/main/install.sh | bash
+```
+
+That's it. It clones the repo, sets up a Python venv, installs dependencies,
+creates and starts a systemd service, and prints a URL. Open that URL in a
+browser on the same network — you'll land on a short setup wizard for
+notification channels (Discord, ntfy, Pushover, SMS). Every step is
+skippable; the dashboard works immediately either way, and anything you
+skip can be added later from the **Settings** page.
+
+Re-running the same install command later updates an existing install in
+place instead of duplicating it.
+
+### Manual setup (if you'd rather not run a piped script)
+```bash
+git clone https://github.com/rgreen1207/cardalert.git
 cd cardalert
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env
-nano .env   # fill in whichever channels/keys you want; all optional
-
-export $(cat .env | xargs)
+cp .env.example .env    # optional — same settings can be entered in-browser instead
 uvicorn app:app --host 0.0.0.0 --port 8420
 ```
 
-Open `http://<pi-ip>:8420`.
-
-### Run permanently (systemd)
+To run it permanently via systemd instead of the installer:
 ```bash
 sudo cp cardalert.service /etc/systemd/system/
 sudo systemctl daemon-reload

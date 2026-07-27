@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Card Alert — Settings</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="board-header">
+  <div class="board-title">
+    <span class="lamp lamp--live"></span>
+    <h1>CARD ALERT — SETTINGS</h1>
+  </div>
+  <div class="board-meta">
+    <span class="tier-badge {{ 'tier--pro' if is_pro else 'tier--free' }}">{{ 'PRO' if is_pro else 'FREE' }}</span>
+  </div>
+</header>
+
+{% include "_nav.html" %}
+
+<main>
+
+  {% if saved %}
+  <section class="panel panel--notice panel--saved">Settings saved.</section>
+  {% endif %}
+
+  <form method="post" action="/settings/save">
+
+    <section class="panel">
+      <h2>Discord <span class="cost-tag cost-tag--free">free</span></h2>
+      <input type="text" name="discord_webhook_url" value="{{ values.discord_webhook_url }}" placeholder="https://discord.com/api/webhooks/..." class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>ntfy push notifications <span class="cost-tag cost-tag--free">free, no signup</span></h2>
+      <input type="text" name="ntfy_topic" value="{{ values.ntfy_topic }}" placeholder="cardalert-yourname-x92q7" class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>Pushover <span class="cost-tag cost-tag--paid">~$5 one-time, paid to Pushover</span></h2>
+      <input type="text" name="pushover_user_key" value="{{ values.pushover_user_key }}" placeholder="User Key" class="wide-input">
+      <input type="text" name="pushover_app_token" value="{{ values.pushover_app_token }}" placeholder="API Token" class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>SMS via Twilio <span class="cost-tag cost-tag--paid">your own account</span></h2>
+      <input type="text" name="twilio_account_sid" value="{{ values.twilio_account_sid }}" placeholder="Account SID" class="wide-input">
+      <input type="text" name="twilio_auth_token" value="{{ values.twilio_auth_token }}" placeholder="Auth Token" class="wide-input">
+      <input type="text" name="twilio_from_number" value="{{ values.twilio_from_number }}" placeholder="Twilio number, e.g. +12065551234" class="wide-input">
+      <input type="text" name="twilio_to_number" value="{{ values.twilio_to_number }}" placeholder="Your phone, e.g. +12065559876" class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>Best Buy polling <span class="cost-tag cost-tag--free">free API key</span></h2>
+      <input type="text" name="bestbuy_api_key" value="{{ values.bestbuy_api_key }}" placeholder="Best Buy API key" class="wide-input">
+    </section>
+
+    <section class="panel">
+      <h2>Pro license</h2>
+      <input type="text" name="gumroad_product_id" value="{{ values.gumroad_product_id }}" placeholder="Gumroad product ID" class="wide-input">
+      <input type="text" name="cardalert_license_key" value="{{ values.cardalert_license_key }}" placeholder="License key" class="wide-input">
+    </section>
+
+    <div class="setup-actions">
+      <button type="submit" class="primary">Save settings</button>
+    </div>
+  </form>
+
+</main>
+</body>
+</html>

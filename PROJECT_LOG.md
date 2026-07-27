@@ -124,6 +124,40 @@ to README.md ("Notification setup"). Same zero-cost-to-Ryan constraint
 holds — Pushover is a one-time ~$5/platform charge paid directly by the end
 user to Pushover, never centralized.
 
+## One-line install + setup wizard (added 2026-07-26)
+Ryan felt setup was too complicated for an average user. Restructured
+config to be web-editable rather than `.env`-only, and added a real
+installer:
+- `config.py` — new central config module. Checks a `settings` table in the
+  DB first (written by the web UI), falls back to `.env`/environment vars
+  second. `notifier.py`, `license.py`, and `pollers.py`'s Best Buy key all
+  read through this now instead of `os.environ` directly — **any future
+  credential/config value must go through config.py the same way, don't
+  reintroduce direct env reads**, or the settings page silently stops
+  working for that value.
+- `db.py` — added a generic `settings` (key/value) table +
+  `get_setting`/`set_setting`/`all_settings` helpers.
+- `install.sh` — the actual one-liner
+  (`curl -sSL .../install.sh | bash`). Clones/updates the repo, builds a
+  venv, installs deps, writes and enables the systemd service, prints the
+  URL. Deliberately has **no interactive prompts** — piping a script
+  through `curl | bash` consumes stdin, so terminal prompts don't reliably
+  work in that mode. All configuration is deferred to the web wizard.
+- `/setup` — first-run wizard (`templates/setup.html`). A
+  `require_setup` middleware in `app.py` redirects every route except
+  `/setup*` and `/static` to `/setup` until `config.is_setup_complete()`
+  is true. Every field is optional; both "Save and continue" and "Skip for
+  now" mark setup complete and proceed to `/products`.
+- `/settings` — same fields plus the Gumroad license fields
+  (`templates/settings.html`), always accessible via nav, no gating.
+  Editing something here takes effect on the next poll/alert cycle with no
+  restart (confirmed by testing: set a value via `config.set`, immediately
+  read back via `config.get`).
+- Tested end-to-end: fresh DB → GET `/` returns 307 to `/setup` → GET
+  `/setup` 200 → POST `/setup/skip` → GET `/` 200 (no more redirect) → GET
+  `/settings` 200 → POST `/settings/save` persists and redirects with
+  `?saved=1`.
+
 ## Three-page restructure (added 2026-07-26)
 Split the single-page app into three: `/` (dashboard, pure monitoring — status
 board + alerts feed + signals feed, read-only, no forms), `/products`

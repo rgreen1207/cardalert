@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS alerts_sent (
     FOREIGN KEY(watchlist_id) REFERENCES watchlist(id)
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
 CREATE TABLE IF NOT EXISTS drop_signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
@@ -208,6 +213,27 @@ def recent_drop_signals(limit=25):
             "SELECT * FROM drop_signals ORDER BY ts DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_setting(key, default=None):
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+
+def set_setting(key, value):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def all_settings():
+    with get_conn() as conn:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        return {r["key"]: r["value"] for r in rows}
 
 
 def restock_pattern(item_id):

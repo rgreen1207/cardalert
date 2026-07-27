@@ -1,47 +1,35 @@
 """
-Notification channels.
+Notification channels. Credentials come from config.py, which checks the
+settings page/wizard's DB values first, then .env — so editing a webhook or
+key in the web UI takes effect on the very next poll cycle, no restart.
 
-Cost model, spelled out because it matters for this project's promise of
-"zero cost to launch or support":
-- Discord webhook: free, no account needed beyond one you already have.
-- ntfy: free, no signup required at all (ntfy.sh is public + open-source,
-  self-hostable too). This is the recommended default push channel.
-- SMS: uses the END USER's own Twilio account (their SID/token/number in
-  their own .env). Twilio charges THEM fractions of a cent per text plus
-  ~$1/mo for a number — nobody centralizes this, nobody but the end user
-  ever sees a bill for it.
+Cost model, unchanged from before:
+- Discord: free. ntfy: free, no signup. Pushover: one-time ~$5/platform,
+  paid to Pushover by the end user. SMS: end user's own Twilio account.
+Card Alert never centralizes or bills for any of these.
 """
-import os
 import requests
-
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")          # e.g. "cardalert-yourname-x92" (pick something unguessable)
-NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
-
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
-TWILIO_TO_NUMBER = os.environ.get("TWILIO_TO_NUMBER", "")
-
-PUSHOVER_USER_KEY = os.environ.get("PUSHOVER_USER_KEY", "")
-PUSHOVER_APP_TOKEN = os.environ.get("PUSHOVER_APP_TOKEN", "")
+import config
 
 
 def send_discord(message: str):
-    if not DISCORD_WEBHOOK_URL:
+    url = config.get("discord_webhook_url")
+    if not url:
         return
     try:
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=8)
+        requests.post(url, json={"content": message}, timeout=8)
     except requests.RequestException as e:
         print("[notifier] Discord send failed:", e)
 
 
 def send_ntfy(message: str, title: str = "Card Alert"):
-    if not NTFY_TOPIC:
+    topic = config.get("ntfy_topic")
+    if not topic:
         return
+    server = config.get("ntfy_server") or "https://ntfy.sh"
     try:
         requests.post(
-            f"{NTFY_SERVER}/{NTFY_TOPIC}",
+            f"{server}/{topic}",
             data=message.encode("utf-8"),
             headers={"Title": title, "Priority": "high"},
             timeout=8,
@@ -50,42 +38,42 @@ def send_ntfy(message: str, title: str = "Card Alert"):
         print("[notifier] ntfy send failed:", e)
 
 
-def send_sms(message: str):
-    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, TWILIO_TO_NUMBER]):
-        return
-    try:
-        requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
-            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-            data={"From": TWILIO_FROM_NUMBER, "To": TWILIO_TO_NUMBER, "Body": message[:1500]},
-            timeout=8,
-        )
-    except requests.RequestException as e:
-        print("[notifier] SMS send failed:", e)
-
-
 def send_pushover(message: str, title: str = "Card Alert"):
-    if not all([PUSHOVER_USER_KEY, PUSHOVER_APP_TOKEN]):
+    user_key = config.get("pushover_user_key")
+    app_token = config.get("pushover_app_token")
+    if not all([user_key, app_token]):
         return
     try:
         requests.post(
             "https://api.pushover.net/1/messages.json",
-            data={
-                "token": PUSHOVER_APP_TOKEN,
-                "user": PUSHOVER_USER_KEY,
-                "title": title,
-                "message": message,
-                "priority": 1,  # high priority, bypasses quiet hours only if user set that up
-            },
+            data={"token": app_token, "user": user_key, "title": title,
+                  "message": message, "priority": 1},
             timeout=8,
         )
     except requests.RequestException as e:
         print("[notifier] Pushover send failed:", e)
 
 
+def send_sms(message: str):
+    sid = config.get("twilio_account_sid")
+    token = config.get("twilio_auth_token")
+    from_number = config.get("twilio_from_number")
+    to_number = config.get("twilio_to_number")
+    if not all([sid, token, from_number, to_number]):
+        return
+    try:
+        requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+            auth=(sid, token),
+            data={"From": from_number, "To": to_number, "Body": message[:1500]},
+            timeout=8,
+        )
+    except requests.RequestException as e:
+        print("[notifier] SMS send failed:", e)
+
+
 def dispatch(message: str, channel: str = "discord"):
-    """channel: dashboard | discord | ntfy | pushover | sms. 'dashboard' is a
-    no-op here — the dashboard already shows alerts_sent on every page load."""
+    """channel: dashboard | discord | ntfy | pushover | sms."""
     if channel == "discord":
         send_discord(message)
     elif channel == "ntfy":
@@ -94,7 +82,7 @@ def dispatch(message: str, channel: str = "discord"):
         send_pushover(message)
     elif channel == "sms":
         send_sms(message)
-    # "dashboard" -> nothing to do, it's read from the DB on page load
+    # "dashboard" -> nothing to do, alerts_sent is read from the DB on page load
 
 
 def restock_message(item: dict, price, url):
