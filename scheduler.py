@@ -30,13 +30,18 @@ POLL_INTERVALS = {
     "bn": 300,
     "amazon": 150,
     "lgs_shopify": 180,
-    "pokemon_center": 600,   # only actually used inside the allowed window, see below
+    "pokemon_center": 600,   # used inside the primary window; see POKEMON_CENTER_OFF_WINDOW_INTERVAL for outside it
 }
 
-# Pokémon Center: only poll Mon-Thu 8am-1pm PST, every 10 minutes, per request.
+# Pokémon Center: poll every 10 minutes Mon-Thu 8am-1pm PST (when restocks
+# and queues most often happen), and less frequently the rest of the time
+# so a queue opening outside that window still gets caught rather than
+# never checked at all — "always alert when the queue is live" needs
+# polling to never fully stop, just slow down.
 POKEMON_CENTER_ALLOWED_DAYS = {0, 1, 2, 3}  # Monday=0 ... Thursday=3
 POKEMON_CENTER_START_HOUR = 8
 POKEMON_CENTER_END_HOUR = 13
+POKEMON_CENTER_OFF_WINDOW_INTERVAL = 1800  # 30 min outside the primary window
 
 _last_polled = {}  # product_retailer_id -> unix ts
 _stop_flag = threading.Event()
@@ -52,9 +57,11 @@ def pokemon_center_window_open() -> bool:
 
 def should_poll_now(retailer_row: dict) -> bool:
     retailer = retailer_row["retailer"]
-    if retailer == "pokemon_center" and not pokemon_center_window_open():
-        return False
-    interval = POLL_INTERVALS.get(retailer, 180)
+    if retailer == "pokemon_center":
+        interval = POLL_INTERVALS["pokemon_center"] if pokemon_center_window_open() \
+            else POKEMON_CENTER_OFF_WINDOW_INTERVAL
+    else:
+        interval = POLL_INTERVALS.get(retailer, 180)
     last = _last_polled.get(retailer_row["id"], 0)
     return (time.time() - last) >= interval
 

@@ -14,7 +14,7 @@
     <h1>CARD ALERT</h1>
   </div>
   <div class="board-meta">
-    <span>Pokémon Center window: <strong class="{{ 'ok' if pc_window_open else 'muted' }}">{{ 'OPEN' if pc_window_open else 'closed (Mon–Thu 8a–1p PST)' }}</strong></span>
+    <span>Pokémon Center window: <strong class="{{ 'ok' if pc_window_open else 'muted' }}">{{ 'OPEN (polling every 10 min)' if pc_window_open else 'outside window (polling every 30 min)' }}</strong></span>
   </div>
 </header>
 

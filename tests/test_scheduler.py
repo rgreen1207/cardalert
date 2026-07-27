@@ -1,5 +1,6 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import time
 import scheduler
 
 
@@ -66,7 +67,77 @@ def test_should_poll_now_respects_interval():
     assert scheduler.should_poll_now(item) is False
 
 
-def test_should_poll_now_pokemon_center_respects_window(monkeypatch):
-    monkeypatch.setattr(scheduler, "pokemon_center_window_open", lambda: False)
+def test_should_poll_now_pokemon_center_uses_faster_interval_inside_window(monkeypatch):
+    monkeypatch.setattr(scheduler, "pokemon_center_window_open", lambda: True)
     item = {"id": 1000, "retailer": "pokemon_center"}
+    scheduler._last_polled[1000] = time.time() - 601  # just over the in-window 10-min interval
+    assert scheduler.should_poll_now(item) is True
+    scheduler._last_polled[1000] = time.time() - 100  # well under it
     assert scheduler.should_poll_now(item) is False
+
+
+def test_should_poll_now_pokemon_center_never_fully_blocked_outside_window(monkeypatch):
+    """Regression guard: 'always alert when the queue is live' requires
+    polling to never fully stop outside the primary window — it used to
+    return False outright, meaning a queue opening outside Mon-Thu
+    8am-1pm PST could never be detected at all. Now polls at a slower
+    (30 min) cadence instead of not polling."""
+    monkeypatch.setattr(scheduler, "pokemon_center_window_open", lambda: False)
+    item = {"id": 1001, "retailer": "pokemon_center"}
+    scheduler._last_polled[1001] = time.time() - 1801  # just over the off-window 30-min interval
+    assert scheduler.should_poll_now(item) is True
+    scheduler._last_polled[1001] = time.time() - 100  # well under it — too soon
+    assert scheduler.should_poll_now(item) is False
+
+
+def test_queue_live_dispatches_alert_and_records_it(monkeypatch):
+    """End-to-end regression guard: this path had zero test coverage
+    before, despite existing in the code. Confirms that when a poller
+    reports raw_status QUEUE_LIVE, an alert actually dispatches to the
+    retailer's configured channel(s) and gets recorded — this is the
+    'always alert when the Pokémon Center queue is live' behavior."""
+    import db
+    import pollers
+    import notifier
+
+    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    dispatched = []
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
+    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+
+    scheduler.poll_one(retailer_row)
+
+    assert dispatched == [("discord", dispatched[0][1])]
+    assert "queue just went LIVE" in dispatched[0][1]
+    alerts = db.recent_alerts()
+    assert len(alerts) == 1
+    assert "queue just went LIVE" in alerts[0]["message"]
+
+
+def test_queue_live_fires_again_on_every_poll_while_still_live(monkeypatch):
+    """'Always' means no suppression window for this alert type, unlike
+    restock alerts which dedupe for 30 minutes — a queue that's still
+    open on the next poll should alert again, not go silent."""
+    import db
+    import pollers
+    import notifier
+
+    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    dispatched = []
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
+    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+
+    scheduler.poll_one(retailer_row)
+    scheduler.poll_one(retailer_row)
+    scheduler.poll_one(retailer_row)
+
+    assert len(dispatched) == 3
+    assert len(db.recent_alerts()) == 3

@@ -56,6 +56,26 @@ def test_amazon_invalid_identifier():
 
 # --- Target ---
 
+def test_target_missing_product_key_returns_not_found_instead_of_crashing(monkeypatch, fake_response):
+    """Regression guard for a reported bug: the dashboard showed 'Error
+    checking stock' for items that were actually just out of stock or
+    otherwise unavailable in a way that gives Target's API a different
+    response shape (delisted, restricted, etc). check_target previously
+    used direct dict indexing (data["data"]["product"]), which raised an
+    uncaught KeyError on any response missing that key, misreporting a
+    legitimate state as a generic error."""
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(json_data={"data": {}}))
+    result = pollers.check_target("1011209279")
+    assert result["in_stock"] is False
+    assert result["raw_status"] == "NOT_FOUND"
+
+
+def test_target_completely_empty_response_does_not_crash(monkeypatch, fake_response):
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(json_data={}))
+    result = pollers.check_target("1011209279")
+    assert result["raw_status"] == "NOT_FOUND"
+
+
 def test_target_in_stock(monkeypatch, fake_response):
     payload = {
         "data": {

@@ -29,7 +29,18 @@ def send_discord(message: str) -> dict:
         return {"ok": False, "status": None, "detail": "No Discord webhook URL saved."}
     full_message = discord_mention_prefix() + message
     try:
-        r = requests.post(url, json={"content": full_message}, timeout=8)
+        r = requests.post(
+            url,
+            json={
+                "content": full_message,
+                # Without this, Discord can render "<@id>"/"<@&id>" as
+                # literal unlinked text instead of an actual ping —
+                # explicitly allowing both mention types is what makes
+                # the mention actually notify the user or role.
+                "allowed_mentions": {"parse": ["users", "roles"]},
+            },
+            timeout=8,
+        )
         if r.status_code < 300:
             return {"ok": True, "status": r.status_code, "detail": None}
         return {"ok": False, "status": r.status_code, "detail": r.text[:300]}
@@ -39,10 +50,15 @@ def send_discord(message: str) -> dict:
 
 def discord_mention_prefix() -> str:
     """Builds the "<@id>" or "<@&id>" prefix from the Settings page's
-    mention fields, or an empty string if mentions are off."""
+    mention fields, or an empty string if mentions are off. Discord IDs
+    are always purely numeric (a "snowflake") — if something non-numeric
+    ended up in that field (e.g. a username typed by mistake instead of
+    the numeric ID from "Copy ID"), the resulting tag could never resolve
+    to a real mention no matter what the message payload allows, so it's
+    skipped entirely rather than sending broken-looking text."""
     mention_type = config.get("discord_mention_type")
     mention_id = config.get("discord_mention_id").strip()
-    if not mention_id or mention_type not in ("user", "role"):
+    if not mention_id or mention_type not in ("user", "role") or not mention_id.isdigit():
         return ""
     if mention_type == "role":
         return f"<@&{mention_id}> "
@@ -115,6 +131,20 @@ def dispatch(message: str, channel: str = "discord"):
     # "dashboard" -> nothing to do, alerts_sent is read from the DB on page load
 
 
+def _strip_tracking(url: str) -> str:
+    """Strips query string and fragment from a URL, keeping only
+    scheme+host+path. Every retailer this app watches works fine with a
+    bare product URL, and query strings are almost always tracking
+    parameters (Amazon's ?ref=, ?tag=, ?th=, Target's affiliate params,
+    etc.) that reveal nothing useful about the product and shouldn't be
+    forwarded in an alert."""
+    if not url:
+        return url
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
 def resolve_product_url(item: dict) -> str:
     """Every alert should carry a real link to the product, but the
     "Product URL" field on the add-item form is easy to leave blank for
@@ -122,10 +152,14 @@ def resolve_product_url(item: dict) -> str:
     bn, pokemon_center, lgs_generic), which meant alerts for those items
     could go out with no link at all. This resolves a usable URL either
     way: the explicit product_url if one was given, otherwise the best
-    link this app can construct from the retailer + identifier alone."""
+    link this app can construct from the retailer + identifier alone.
+    Every return path goes through _strip_tracking, since a pasted URL
+    (in either the product_url field or the identifier field) commonly
+    carries tracking query parameters that reveal nothing about the
+    product and shouldn't be forwarded in an alert."""
     explicit = (item.get("product_url") or "").strip()
     if explicit:
-        return explicit
+        return _strip_tracking(explicit)
 
     retailer = item.get("retailer", "")
     identifier = (item.get("identifier") or "").strip()
@@ -133,21 +167,25 @@ def resolve_product_url(item: dict) -> str:
         return ""
 
     if retailer == "target":
-        return f"https://www.target.com/p/-/A-{identifier}"
+        return _strip_tracking(f"https://www.target.com/p/-/A-{identifier}")
     if retailer == "amazon":
         if identifier.startswith("http"):
-            return identifier
-        return f"https://www.amazon.com/dp/{identifier}"
+            return _strip_tracking(identifier)
+        return _strip_tracking(f"https://www.amazon.com/dp/{identifier}")
     if retailer == "bestbuy":
+        # Not stripped: this is a search-results URL, and ?st=... is the
+        # actual search query, not a tracking parameter — stripping it
+        # would leave a useless bare search page with nothing to search.
         return f"https://www.bestbuy.com/site/searchpage.jsp?st={identifier}"
     if retailer == "lgs_shopify":
         domain = identifier.split("/products/")[0].rstrip("/")
         if not domain.startswith("http"):
             domain = "https://" + domain
-        return f"{domain}/products/{identifier.split('/products/')[-1]}" if "/products/" in identifier else domain
+        url = f"{domain}/products/{identifier.split('/products/')[-1]}" if "/products/" in identifier else domain
+        return _strip_tracking(url)
     # walmart, bn, pokemon_center, lgs_generic: the identifier IS the URL
     if identifier.startswith("http"):
-        return identifier
+        return _strip_tracking(identifier)
     return ""
 
 

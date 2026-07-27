@@ -59,7 +59,7 @@
         </select>
         <input type="text" name="discord_mention_id" value="{{ values.discord_mention_id }}" placeholder="Discord user or role ID" class="mention-id-input">
       </div>
-      <p class="hint">Right-click a user or role in Discord (with Developer Mode on, under Settings → Advanced) and choose "Copy ID." Every alert will start with that mention.</p>
+      <p class="hint">Right-click a user or role in Discord (with Developer Mode on, under Settings → Advanced) and choose "Copy ID." This must be the numeric ID Discord copies (e.g. 123456789012345678), not a username — a non-numeric value here is skipped rather than sent as broken text. Every alert will start with that mention.</p>
       <div class="test-row">
         <button type="button" id="test-discord-btn">Send test alert</button>
         <span id="test-discord-output" class="test-output"></span>
