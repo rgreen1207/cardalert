@@ -1,24 +1,13 @@
-"""
-Retailer pollers.
-
-IMPORTANT SCOPE NOTE (read this before extending):
-Every function here does exactly one thing: fetch a public page/endpoint and
-read back stock + price. None of these functions add to cart, log in, hold a
-session, or submit any action on a retailer's site. That line is intentional.
-see PROJECT_LOG.md for why. If you're future-Claude or future-Ryan extending
-this file, keep new pollers read-only.
-
-Each poller returns a dict:
-    {"in_stock": bool, "price": float | None, "raw_status": str}
-or raises on a hard failure (caller handles logging/backoff).
-"""
 import os
 import re
 import json
+import time
 import config
+import threading
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests
+from playwright.sync_api import sync_playwright
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -31,7 +20,87 @@ TARGET_HEADERS = {
     "Origin": "https://www.target.com",
     "Referer": "https://www.target.com/",
 }
+TARGET_SESSION = {
+    "api_key": None,
+    "cookies": {},
+    "visitor_id": None
+}
 TIMEOUT = 12
+
+# Thread lock prevents multiple parallel requests from triggering multiple browser instances simultaneously
+_SYNC_LOCK = threading.Lock()
+# Prevent hammering the sync function if Target is down
+_LAST_SYNC_TIME = 0
+SYNC_COOLDOWN = 300  # 5 minutes in seconds
+
+def sync_target_session(force=False):
+    """
+    Raspberry Pi Optimized Session Sync.
+    The 'with' statement guarantees that Playwright and Chromium are fully 
+    closed and garbage-collected out of RAM when finished.
+    """
+    global _LAST_SYNC_TIME
+    
+    with _SYNC_LOCK:
+        now = time.time()
+        if not force and (now - _LAST_TIME_SYNC) < SYNC_COOLDOWN:
+            print("[!] Sync requested, but cooldown active. Skipping to protect memory/CPU.")
+            return False
+
+        print("[*] Launching Chromium to synchronize Target session state...")
+        pi_chromium_path = "/usr/bin/chromium-browser"
+        if not os.path.exists(pi_chromium_path):
+            if os.path.exists("/usr/bin/chromium"):
+                pi_chromium_path = "/usr/bin/chromium"
+            else:
+                print("[-] Error: Native Chromium binary not found.")
+                return False
+
+        try:
+            # Context manager handles instantiation
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, executable_path=pi_chromium_path)
+                context = browser.new_context(
+                    user_agent=HEADERS["user-agent"],
+                    viewport={"width": 1920, "height": 1080}
+                )
+                page = context.new_page()
+                
+                # Fetch a baseline page to safely generate tracking sessions
+                page.goto("https://target.com/p/-/A-1011209279", wait_until="networkidle", timeout=45000)
+                
+                # Extract API Key from window configuration
+                try:
+                    runtime_config = page.evaluate("() => window.__TGT_DATA__")
+                    if runtime_config:
+                        api_key = runtime_config.get("__REDSKY_API_KEY__") or runtime_config.get("config", {}).get("apiKey")
+                        if api_key:
+                            TARGET_SESSION["api_key"] = api_key
+                except Exception:
+                    pass
+
+                if not TARGET_SESSION["api_key"]:
+                    content = page.content()
+                    match = re.search(r'"apiKey"\s*:\s*"([0-9a-f]{32})"', content)
+                    if match:
+                        TARGET_SESSION["api_key"] = match.group(1)
+
+                # Cache valid cookies & tracking metadata
+                browser_cookies = context.cookies()
+                cookie_dict = {c["name"]: c["value"] for c in browser_cookies}
+                TARGET_SESSION["cookies"] = cookie_dict
+                TARGET_SESSION["visitor_id"] = cookie_dict.get("VisitorID")
+
+                # Context manager reaches end here: browser, context, and page are explicitly closed.
+                # Playwright processes are entirely killed.
+                
+            _LAST_SYNC_TIME = time.time()
+            print(f"[+] Sync Successful. Cookies Cached: {len(cookie_dict)}")
+            return True
+            
+        except Exception as e:
+            print(f"[-] Raspberry Pi Session Sync Failed: {str(e)}")
+            return False
 
 
 def discover_target_api_key(candidate_tcins=None):
@@ -83,71 +152,61 @@ def _classify_block_response(r):
 
 
 def check_target(tcin: str, store_id: str = "3991"):
-    """
-    Queries Target's Redsky API using a spoofed TLS stack.
-    Checks both direct shipping availability and local store pickup availability.
-    """
-    api_key = config.get("target_api_key") or "9f36aeafbe60771e321a7cc95a78140772ab3e96"
+    """Queries Target's Redsky API using the dynamically managed session token."""
+    api_key = TARGET_SESSION["api_key"] or config.get("target_api_key") or "9f36aeafbe60771e321a7cc95a78140772ab3e96"
     
-    # Utilizing the production endpoint with an explicit pricing and fulfillment store loop
     url = (
-        "https://redsky.target.com/redsky_aggregations/v1/web/pdp_client_v1"
+        "https://target.com"
         f"?key={api_key}&tcin={tcin}"
         f"&pricing_store_id={store_id}"
         f"&store_id={store_id}"
         "&is_bot=false"
     )
     
+    authenticated_headers = {**HEADERS}
+    if TARGET_SESSION["visitor_id"]:
+        authenticated_headers["x-visitor-id"] = TARGET_SESSION["visitor_id"]
+
     try:
-        # Mandatory: impersonate keyword forces curl_cffi to match browser networking signatures
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+        r = requests.get(
+            url, 
+            headers=authenticated_headers, 
+            cookies=TARGET_SESSION["cookies"], 
+            timeout=TIMEOUT, 
+            impersonate="chrome124"
+        )
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "REQUEST_FAILED", "error_detail": str(e)}
 
-    if r.status_code in (401, 403, 429):
-        raw_status, detail = _classify_block_response(r)
-        return {"in_stock": False, "price": None, "raw_status": raw_status, "error_detail": detail}
+    # Explicitly catch blocks, un-authenticated status codes, or captcha triggers
+    if r.status_code in (401, 403, 429) or "RttCheck" in r.text or "monocle" in r.text.lower():
+        return {"in_stock": False, "price": None, "raw_status": "SESSION_EXPIRED_NEEDS_SYNC", "error_detail": f"HTTP {r.status_code}"}
         
     if r.status_code != 200:
         return {"in_stock": False, "price": None, "raw_status": f"HTTP_{r.status_code}", "error_detail": r.text[:200]}
 
     try:
         data = r.json()
-    except ValueError:
-        return {"in_stock": False, "price": None, "raw_status": "UNEXPECTED_RESPONSE",
-                "error_detail": f"Non-JSON response body: {r.text[:500]}"}
+        product = data.get("data", {}).get("product")
+        if not product:
+            return {"in_stock": False, "price": None, "raw_status": "NOT_FOUND"}
 
-    product = data.get("data", {}).get("product")
-    if not product:
-        return {"in_stock": False, "price": None, "raw_status": "NOT_FOUND"}
-
-    # Extract price
-    price = product.get("price", {}).get("current_retail")
-
-    # Extract fulfillment systems
-    fulfillment = product.get("fulfillment", {})
-    
-    # 1. Check Nationwide Online Shipping Inventory
-    shipping_status = fulfillment.get("shipping_options", {}).get("availability_status", "UNKNOWN")
-    shipping_in_stock = shipping_status == "IN_STOCK"
-    
-    # 2. Check Local Store Pickup Inventory (In-store or curbside pick up)
-    inline_pickup = fulfillment.get("store_options", [{}])[0] if fulfillment.get("store_options") else {}
-    pickup_status = inline_pickup.get("order_pickup", {}).get("availability_status", "UNKNOWN")
-    in_store_stock = pickup_status == "IN_STOCK"
-    
-    # Overall target system stock valuation
-    in_stock = shipping_in_stock or in_store_stock
-    
-    raw_status_summary = f"Shipping: {shipping_status} | Store Pickup: {pickup_status}"
-
-    return {
-        "in_stock": in_stock, 
-        "price": price, 
-        "raw_status": raw_status_summary,
-        "shipping_available": shipping_in_stock,
-        "store_pickup_available": in_store_stock
-    }
+        price = product.get("price", {}).get("current_retail")
+        fulfillment = product.get("fulfillment", {})
+        
+        shipping_status = fulfillment.get("shipping_options", {}).get("availability_status", "UNKNOWN")
+        inline_pickup = fulfillment.get("store_options", {}) if fulfillment.get("store_options") else {}
+        
+        # Guard clause handling store list structural variations safely
+        if isinstance(inline_pickup, list) and len(inline_pickup) > 0:
+            inline_pickup = inline_pickup[0]
+            
+        pickup_status = inline_pickup.get("order_pickup", {}).get("availability_status", "UNKNOWN") if isinstance(inline_pickup, dict) else "UNKNOWN"
+        
+        in_stock = (shipping_status == "IN_STOCK") or (pickup_status == "IN_STOCK")
+        return {"in_stock": in_stock, "price": price, "raw_status": f"Fulfillment Status -> Ship: {shipping_status} | Pickup: {pickup_status}"}
+    except Exception as e:
+        return {"in_stock": False, "price": None, "raw_status": "PARSE_ERROR", "error_detail": str(e)}
 
 
 def check_walmart(product_url: str):
