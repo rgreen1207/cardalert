@@ -391,6 +391,18 @@ def test_apply_update_endpoint(client, monkeypatch):
     assert data["updated"] is True
 
 
+def test_settings_page_shows_unsaved_changes_reminder(client):
+    """Regression guard: it wasn't clear that edits needed an explicit
+    Save before taking effect (e.g. testing Discord right after editing
+    it used the old saved value with no warning). Confirms both the
+    static reminder and the dynamic unsaved-changes bar are present."""
+    client.post("/setup/skip")
+    html = client.get("/settings").text
+    assert "only take effect after you click" in html
+    assert 'id="unsaved-bar"' in html
+    assert 'id="settings-form"' in html
+
+
 def test_settings_page_shows_current_version(client, monkeypatch):
     client.post("/setup/skip")
     import updater

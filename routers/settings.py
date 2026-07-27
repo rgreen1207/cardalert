@@ -37,6 +37,7 @@ def settings_save(
     twilio_from_number: str = Form(""),
     twilio_to_number: str = Form(""),
     bestbuy_api_key: str = Form(""),
+    target_api_key: str = Form(""),
     currency: str = Form("USD"),
     dashboard_password: str = Form(""),
 ):
@@ -52,6 +53,7 @@ def settings_save(
         "twilio_from_number": twilio_from_number,
         "twilio_to_number": twilio_to_number,
         "bestbuy_api_key": bestbuy_api_key,
+        "target_api_key": target_api_key,
         "currency": currency,
     }.items():
         config.set(key, value)

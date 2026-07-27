@@ -39,7 +39,11 @@
     <p class="hint">Updating pulls the latest release, reinstalls dependencies, and restarts the app. It takes a few seconds, and this page will stop responding briefly while it restarts.</p>
   </section>
 
-  <form method="post" action="/settings/save">
+  <form method="post" action="/settings/save" id="settings-form">
+
+    <section class="panel panel--notice">
+      Changes on this page only take effect after you click <strong>Save settings</strong> at the bottom, testing or using a field before saving still uses the old value.
+    </section>
 
     <section class="panel">
       <h2>Currency</h2>
@@ -64,7 +68,6 @@
         <button type="button" id="test-discord-btn">Send test alert</button>
         <span id="test-discord-output" class="test-output"></span>
       </div>
-      <p class="hint">Tests whatever's currently saved. Save this field first if you just changed it.</p>
     </section>
 
     <section class="panel">
@@ -92,6 +95,12 @@
     </section>
 
     <section class="panel">
+      <h2>Target polling <span class="cost-tag cost-tag--free">optional</span></h2>
+      <p class="hint">Card Alert uses a shared key by default that gets rate-limited from time to time, since everyone using it shares the same limit. Open Target's site in your browser, open dev tools' Network tab, load any product page, find a request to redsky.target.com, and copy its "key" parameter here to use your own instead.</p>
+      <input type="password" name="target_api_key" value="{{ values.target_api_key }}" placeholder="Leave blank to use the shared default key" class="wide-input" autocomplete="off">
+    </section>
+
+    <section class="panel">
       <h2>Dashboard password <span class="cost-tag cost-tag--free">recommended</span></h2>
       <p class="hint">Locks every page behind a password. Leave blank to keep the dashboard open to anyone who can reach it on your network (the default).</p>
       <input type="password" name="dashboard_password" placeholder="Leave blank to keep unprotected / unchanged" class="wide-input" autocomplete="new-password">
@@ -102,11 +111,26 @@
     </div>
   </form>
 
+  <div id="unsaved-bar" class="unsaved-bar">
+    <span>You have unsaved changes.</span>
+    <button type="button" id="unsaved-save-btn" class="primary">Save settings</button>
+  </div>
+
 </main>
 
 <script>
+  const settingsForm = document.getElementById('settings-form');
+  const unsavedBar = document.getElementById('unsaved-bar');
+  settingsForm.addEventListener('input', () => { unsavedBar.classList.add('visible'); });
+  settingsForm.addEventListener('change', () => { unsavedBar.classList.add('visible'); });
+  document.getElementById('unsaved-save-btn').addEventListener('click', () => { settingsForm.submit(); });
+
   document.getElementById('test-discord-btn').addEventListener('click', async () => {
     const out = document.getElementById('test-discord-output');
+    if (unsavedBar.classList.contains('visible')) {
+      out.textContent = '⚠️ You have unsaved changes — this will test the last saved values, not what you just typed. Save first to test your new settings.';
+      return;
+    }
     out.textContent = 'Sending...';
     const res = await fetch('/settings/test-discord', { method: 'POST' });
     const data = await res.json();

@@ -28,6 +28,7 @@ _KEYS = {
     "currency": ("CARDALERT_CURRENCY", "USD"),
     "discord_mention_type": ("DISCORD_MENTION_TYPE", ""),  # "" | "user" | "role"
     "discord_mention_id": ("DISCORD_MENTION_ID", ""),
+    "target_api_key": ("TARGET_API_KEY", ""),
 }
 
 CURRENCY_SYMBOLS = {

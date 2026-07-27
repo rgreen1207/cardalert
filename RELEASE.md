@@ -6,9 +6,28 @@ match git tags of the same name (`v0.0.3`, etc.) — the in-app updater
 (Settings → "Check for updates") compares against tags, so cutting a
 release means both: add an entry here, then tag the commit.
 
-## [Unreleased]
-Nothing yet. Add entries here as changes land, then move them under a new
-version heading when you tag a release.
+## [0.0.7]
+### Added
+- A clear reminder on Settings that changes only take effect after
+  clicking "Save settings," plus a sticky "you have unsaved changes" bar
+  that appears the moment anything is edited and stays reachable without
+  scrolling. "Send test alert" now also refuses to run (with an
+  explanation) if there are unsaved changes, instead of silently testing
+  the old saved value with no warning — the exact confusion this was
+  meant to fix.
+- A "Target polling" field on Settings to use your own redsky API key
+  instead of the shared default one. The shared key is public and used
+  across the hobbyist restock-tracking community, so it absorbs
+  aggregate rate-limiting from everyone on it, not just you — a key only
+  you use avoids that. Found the same legitimate way the default one
+  was: opening Target's site and watching what its own frontend requests.
+- Target's requests now send `Origin`, `Referer`, and `Accept` headers
+  matching what a real page load includes, not just a bare User-Agent —
+  a normal completeness fix, not fingerprint evasion. Deliberately did
+  not go further into proxy rotation, headless-browser automation, or
+  anything else specifically meant to defeat Target's anti-bot
+  detection — that's a different category of thing than this project
+  does at any tier.
 
 ## [0.0.6]
 A redesign pass plus one diagnostics improvement: the app finally has a

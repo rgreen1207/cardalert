@@ -23,18 +23,34 @@ HEADERS = {
                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
+TARGET_HEADERS = {
+    **HEADERS,
+    "Accept": "application/json",
+    "Origin": "https://www.target.com",
+    "Referer": "https://www.target.com/",
+}
 TIMEOUT = 12
 
 
 def check_target(tcin: str):
     """Target's public redsky aggregation endpoint. `tcin` is the numeric id
-    in the product URL, e.g. target.com/p/-/A-1011209279 -> tcin=1011209279."""
+    in the product URL, e.g. target.com/p/-/A-1011209279 -> tcin=1011209279.
+
+    Uses a shared, publicly-known API key by default — the same one
+    reused across the hobbyist restock-tracking community, which means
+    it's more likely to get rate-limited or blocked than a key only you
+    use, since Target's abuse detection sees aggregate volume across
+    everyone on that key, not just you. Setting your own key on the
+    Settings page (found the same legitimate way this default one was:
+    inspecting your own browser's Network tab while loading a Target
+    product page) avoids sharing that fate."""
+    api_key = config.get("target_api_key") or "9f36aeafbe60771e321a7cc95a78140772ab3e96"
     url = (
         "https://redsky.target.com/redsky_aggregations/v1/web/pdp_client_v1"
-        f"?key=9f36aeafbe60771e321a7cc95a78140772ab3e96&tcin={tcin}"
+        f"?key={api_key}&tcin={tcin}"
         "&pricing_store_id=3991&is_bot=false"
     )
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    r = requests.get(url, headers=TARGET_HEADERS, timeout=TIMEOUT)
     # Distinguish "Target actively rejected this request" from "the
     # response was fine but didn't have the shape we expected" — these
     # are genuinely different situations and were previously both

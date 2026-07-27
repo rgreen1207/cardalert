@@ -499,3 +499,21 @@ button.danger:hover { background: var(--coral-soft); border-color: var(--coral);
 @media (max-width: 720px) {
   .more-options-grid { grid-template-columns: 1fr; }
 }
+
+.unsaved-bar {
+  position: sticky;
+  bottom: 16px;
+  margin-top: -8px;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  padding: 10px 10px 10px 20px;
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.unsaved-bar.visible { display: flex; }
