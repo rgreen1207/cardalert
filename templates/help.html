@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Card Alert — Help</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="board-header">
+  <div class="board-title">
+    <span class="lamp lamp--live"></span>
+    <h1>CARD ALERT — HELP</h1>
+  </div>
+</header>
+
+{% include "_nav.html" %}
+
+<main>
+
+  <section class="panel">
+    <h2>FAQ</h2>
+    <h3>How do I stop getting alerted for overpriced restocks?</h3>
+    <p class="hint">On the Products page, set "Max price / MSRP" to the price you're willing to pay. Anything above that (plus whatever % you allow in "Allow up to (%) over that price") is silently skipped — no alert, no notification, nothing.</p>
+
+    <h3>Why didn't I get an alert for something that was in stock?</h3>
+    <p class="hint">Check three things: (1) the item is marked active, not paused, on the Products page; (2) the price was at or under your max price cap; (3) your chosen alert channel has valid credentials in <span class="mono">.env</span>. Dashboard alerts always show up regardless of channel — check there first.</p>
+
+    <h3>A retailer's poller stopped working — is that a bug?</h3>
+    <p class="hint">Usually means the retailer changed their page structure. Check GitHub Issues for a fix, or file one — this happens periodically and isn't something Card Alert can fully prevent.</p>
+
+    <h3>Can this add things to my cart or check out for me?</h3>
+    <p class="hint">No, by design, in every tier. It only reads public stock/price info and alerts you. See <span class="mono">LICENSE.md</span> for why.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Adding a product — identifier formats</h2>
+    <table class="board-table help-table">
+      <thead><tr><th>Retailer</th><th>What to put in "Identifier"</th><th>Example</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">target</td><td>Numeric TCIN from the product URL</td><td class="mono">target.com/p/-/A-1011209279 → 1011209279</td></tr>
+        <tr><td class="mono">walmart</td><td>Full product page URL</td><td class="mono">https://www.walmart.com/ip/...</td></tr>
+        <tr><td class="mono">bestbuy</td><td>SKU number (on the product page)</td><td class="mono">6418599</td></tr>
+        <tr><td class="mono">bn</td><td>Full product page URL</td><td class="mono">https://www.barnesandnoble.com/w/...</td></tr>
+        <tr><td class="mono">pokemon_center</td><td>Full product page URL</td><td class="mono">https://www.pokemoncenter.com/product/...</td></tr>
+        <tr><td class="mono">lgs_shopify</td><td>Domain + product path (no https://)</td><td class="mono">yourlocalshop.com/products/booster-box</td></tr>
+        <tr><td class="mono">lgs_generic</td><td>Full product page URL — use this if the "Check if a local shop is Shopify-backed" tool on the dashboard says no</td><td class="mono">https://anyshop.com/product/xyz</td></tr>
+      </tbody>
+    </table>
+    <p class="hint">Not sure if your local game store runs Shopify? Use the checker tool on the main dashboard before picking a retailer type.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Notification setup</h2>
+    <p class="hint">Set which channel each item uses from the "Alert via" dropdown when adding it. Fill in the matching credentials in your <span class="mono">.env</span> file first — instructions below.</p>
+
+    <h3>Discord <span class="cost-tag cost-tag--free">free</span></h3>
+    <ol>
+      <li>In your Discord server: Server Settings → Integrations → Webhooks → New Webhook.</li>
+      <li>Pick the channel it should post to, copy the Webhook URL.</li>
+      <li>Set <span class="mono">DISCORD_WEBHOOK_URL</span> in <span class="mono">.env</span>.</li>
+    </ol>
+
+    <h3>ntfy <span class="cost-tag cost-tag--free">free, no signup</span></h3>
+    <ol>
+      <li>Install the ntfy app (iOS/Android) or use a browser at ntfy.sh.</li>
+      <li>Subscribe to a topic name you make up — treat it like a password, e.g. <span class="mono">cardalert-yourname-x92q7</span>.</li>
+      <li>Set <span class="mono">NTFY_TOPIC</span> in <span class="mono">.env</span> to that same name.</li>
+    </ol>
+
+    <h3>Pushover <span class="cost-tag cost-tag--paid">~$5 one-time, paid to Pushover</span></h3>
+    <ol>
+      <li>Create a free account at pushover.net and install the app.</li>
+      <li>Copy your <strong>User Key</strong> from your account page.</li>
+      <li>Create an "Application" (any name) to get an <strong>API Token</strong>.</li>
+      <li>Set <span class="mono">PUSHOVER_USER_KEY</span> and <span class="mono">PUSHOVER_APP_TOKEN</span> in <span class="mono">.env</span>.</li>
+    </ol>
+    <p class="hint">The $5 charge happens inside the Pushover app itself after a trial period — Card Alert never touches that payment.</p>
+
+    <h3>SMS via Twilio <span class="cost-tag cost-tag--paid">your own account, fractions of a cent/text</span></h3>
+    <ol>
+      <li>Create a free Twilio account at twilio.com (includes trial credit).</li>
+      <li>Copy your <strong>Account SID</strong> and <strong>Auth Token</strong> from the console.</li>
+      <li>Buy a Twilio phone number (a few dollars/month after trial).</li>
+      <li>Set <span class="mono">TWILIO_ACCOUNT_SID</span>, <span class="mono">TWILIO_AUTH_TOKEN</span>, <span class="mono">TWILIO_FROM_NUMBER</span>, and <span class="mono">TWILIO_TO_NUMBER</span> (your real phone, e.g. <span class="mono">+12065551234</span>) in <span class="mono">.env</span>.</li>
+    </ol>
+    <p class="hint">Every text after that is billed directly to your Twilio account — Card Alert never sees or handles that billing.</p>
+  </section>
+
+  <section class="panel">
+    <h2>MSRP cap</h2>
+    <p class="hint">"Ignore if over MSRP by (%)" hides restocks priced too far above sticker price from triggering an alert — set to <span class="mono">0</span> to only alert at exact MSRP or below, or e.g. <span class="mono">15</span> to allow up to 15% over before it's ignored.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Free vs. Pro</h2>
+    <p class="hint">Free tier covers 2 retailers and dashboard-only alerts. Pro unlocks unlimited retailers, Discord/ntfy/Pushover/SMS alerts, restock pattern analytics, and forecast/chatter signals — enter a license key in <span class="mono">.env</span> to unlock.</p>
+  </section>
+
+</main>
+</body>
+</html>

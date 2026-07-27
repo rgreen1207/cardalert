@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Card Alert — Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="board-header">
+  <div class="board-title">
+    <span class="lamp lamp--live"></span>
+    <h1>CARD ALERT</h1>
+  </div>
+  <div class="board-meta">
+    <span>Pokémon Center window: <strong class="{{ 'ok' if pc_window_open else 'muted' }}">{{ 'OPEN' if pc_window_open else 'closed (Mon–Thu 8a–1p PST)' }}</strong></span>
+    <span class="tier-badge {{ 'tier--pro' if is_pro else 'tier--free' }}">{{ 'PRO' if is_pro else 'FREE' }}</span>
+  </div>
+</header>
+
+{% include "_nav.html" %}
+
+<main>
+
+  <section class="panel">
+    <h2>Watch status</h2>
+    <table class="board-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Product</th>
+          <th>Game</th>
+          <th>Retailer</th>
+          <th>Status</th>
+          <th>Price</th>
+          <th>Link</th>
+          <th>Qty left / target</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        {% set status = item.last_status %}
+        {% set in_stock = status and status.in_stock and not status.ignored_over_price %}
+        {% set ignored = status and status.ignored_over_price %}
+        <tr class="{{ 'row--paused' if not item.active else '' }}">
+          <td>
+            <span class="lamp {{ 'lamp--live' if in_stock else ('lamp--warn' if ignored else 'lamp--idle') }}"></span>
+          </td>
+          <td>{{ item.name }}</td>
+          <td class="mono">{{ item.game }}</td>
+          <td class="mono">{{ item.retailer }}</td>
+          <td class="mono">
+            {% if not item.active %}PAUSED
+            {% elif in_stock %}IN STOCK
+            {% elif ignored %}OVER PRICE CAP
+            {% elif status %}{{ 'SOLD OUT' if status.in_stock == 0 else status.raw_status }}
+            {% else %}—{% endif %}
+          </td>
+          <td class="mono">{{ '$%.2f'|format(status.price) if status and status.price else '—' }}</td>
+          <td>{% if item.product_url %}<a href="{{ item.product_url }}" target="_blank">view</a>{% endif %}</td>
+          <td class="mono">{{ item.remaining_qty }} / {{ item.target_qty }}</td>
+          <td>{% if is_pro %}<button type="button" class="pattern-btn" data-item-id="{{ item.id }}">pattern</button>{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">Nothing on the watchlist yet — <a href="/products">add a product</a> to get started.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div id="pattern-output" class="pattern-output"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Recent alerts</h2>
+    <ul class="feed">
+      {% for a in alerts %}
+      <li><span class="mono ts">{{ a.ts | int }}</span> {{ a.message }}</li>
+      {% else %}
+      <li class="empty">No alerts sent yet.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>Restock chatter & forecasts {{ '' if is_pro else '(pro tier)' }}</h2>
+    <ul class="feed">
+      {% for s in signals %}
+      <li><span class="mono ts">[{{ s.kind|default('chatter') }}] {{ s.source }}</span> <a href="{{ s.url }}" target="_blank">{{ s.title }}</a></li>
+      {% else %}
+      <li class="empty">No recent chatter matched your watched games.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+</main>
+
+<script>
+  setTimeout(() => location.reload(), 30000);
+
+  document.querySelectorAll('.pattern-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.itemId;
+      const out = document.getElementById('pattern-output');
+      out.textContent = 'Loading pattern...';
+      const res = await fetch(`/items/${id}/pattern`);
+      const data = await res.json();
+      if (data.error) { out.textContent = data.error; return; }
+      const days = data.top_days.map(d => `${d[0]} (${d[1]}x)`).join(', ');
+      const hours = data.top_hours.map(h => `${h[0]} (${h[1]}x)`).join(', ');
+      out.textContent = `${data.total_events} restock event(s) logged. Most common days: ${days}. Most common hours: ${hours}.`;
+    });
+  });
+</script>
+</body>
+</html>
