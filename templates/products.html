@@ -57,7 +57,7 @@
             <select name="retailer">
               {% for r in retailers %}<option value="{{ r }}">{{ retailer_display[r] }}</option>{% endfor %}
             </select>
-            <input type="text" name="identifier" placeholder="TCIN / SKU / product URL / shop handle">
+            <input type="text" name="identifier" placeholder="TCIN / SKU / product URL / shop handle" required>
             <input type="text" name="product_url" placeholder="Product URL (optional for some retailers)">
             <button type="button" class="remove-retailer-row" title="Remove this retailer">×</button>
           </div>

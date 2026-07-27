@@ -111,6 +111,71 @@ def test_add_product_with_multiple_retailers(client):
     assert retailer_names == {"target", "amazon", "walmart"}
 
 
+def test_add_product_with_multiple_retailers_using_raw_interleaved_form_encoding(client):
+    """Regression guard for a reported bug: only the first retailer got
+    watched when adding several at once. Sends the raw form body in the
+    exact field order a real browser produces (interleaved per-row:
+    retailer1, identifier1, url1, retailer2, identifier2, url2), not the
+    grouped-by-field-name order a naive test helper might use, to make
+    sure the two orderings are genuinely handled the same way."""
+    client.post("/setup/skip")
+    raw_body = (
+        "name=MultiTest&game=pokemon&target_qty=1&msrp=49.99&max_pct_over_msrp=0"
+        "&retailer=target&identifier=111&product_url="
+        "&retailer=amazon&identifier=B0D7QJXK9P&product_url="
+        "&retailer=walmart&identifier=https%3A%2F%2Fwalmart.com%2Fip%2F456&product_url="
+    )
+    response = client.post("/products/add", content=raw_body,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"})
+    assert response.status_code == 200  # follows the redirect by default
+    products = client.get("/api/items").json()
+    assert len(products) == 1
+    retailer_pairs = {(r["retailer"], r["identifier"]) for r in products[0]["retailers"]}
+    assert retailer_pairs == {
+        ("target", "111"),
+        ("amazon", "B0D7QJXK9P"),
+        ("walmart", "https://walmart.com/ip/456"),
+    }
+
+
+def test_identifier_field_is_required_on_dynamic_retailer_rows(client):
+    """Regression guard: an incomplete retailer row (missing identifier)
+    was silently dropped server-side with no feedback, which is exactly
+    what made it look like retailers were randomly vanishing. Requiring
+    the field client-side means the browser blocks submission instead of
+    silently losing data."""
+    client.post("/setup/skip")
+    html = client.get("/products").text
+    assert 'name="identifier" placeholder="TCIN / SKU / product URL / shop handle" required' in html
+
+
+def test_target_qty_survives_add_edit_and_display_with_multiple_quantity(client):
+    """Regression guard for a reported bug: target quantity reset to 1
+    whenever 2+ was set, on add, edit, or page reload. Checks all three
+    surfaces explicitly."""
+    client.post("/setup/skip")
+    _add_product(client, target_qty=3)
+    product = client.get("/api/items").json()[0]
+    assert product["target_qty"] == 3
+    assert product["remaining_qty"] == 3
+
+    # Displayed correctly on the products listing page
+    html = client.get("/products").text
+    assert "3 / 3" in html
+
+    # Displayed correctly on the edit page before any changes are made
+    edit_html = client.get(f"/products/{product['id']}/edit").text
+    assert 'name="target_qty" value="3"' in edit_html
+
+    # Survives an edit that changes it further
+    client.post(f"/products/{product['id']}/edit", data={
+        "name": "Item", "game": "pokemon", "target_qty": 5,
+        "msrp": 49.99, "max_pct_over_msrp": 0,
+    })
+    product_after = client.get("/api/items").json()[0]
+    assert product_after["target_qty"] == 5
+
+
 def test_add_product_with_no_channels_defaults_to_dashboard_only(client):
     client.post("/setup/skip")
     _add_product(client)

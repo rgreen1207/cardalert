@@ -37,7 +37,15 @@ def check_target(tcin: str):
     r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
     data = r.json()
-    product = data["data"]["product"]
+    # .get() rather than direct indexing: Target's API can legitimately
+    # return a response missing "product" (delisted items, some
+    # restricted/age-gated items, occasional API quirks) — that's a real,
+    # reportable state, not a bug in this poller, so it should surface as
+    # "not found" rather than raising and getting logged as a generic
+    # "Error checking stock."
+    product = data.get("data", {}).get("product")
+    if not product:
+        return {"in_stock": False, "price": None, "raw_status": "NOT_FOUND"}
     price = product.get("price", {}).get("current_retail")
     avail = (
         product.get("fulfillment", {})

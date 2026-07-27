@@ -118,6 +118,41 @@ def test_restock_message_format():
     assert "https://target.com/x" in msg
 
 
+def test_resolve_product_url_strips_tracking_params_from_amazon_url():
+    """Regression guard for a reported bug: alert links (Amazon
+    especially, but any retailer) should carry a clean product URL, not
+    whatever tracking query string was pasted in."""
+    item = {"retailer": "amazon", "identifier": "B0D7QJXK9P",
+            "product_url": "https://www.amazon.com/dp/B0D7QJXK9P?ref=sr_1_1&tag=affiliate123&th=1"}
+    result = notifier.resolve_product_url(item)
+    assert result == "https://www.amazon.com/dp/B0D7QJXK9P"
+    assert "ref=" not in result
+    assert "tag=" not in result
+
+
+def test_resolve_product_url_strips_tracking_params_from_identifier_url():
+    """Same fix, but for retailers where the identifier field itself IS
+    the URL (walmart, bn, pokemon_center, lgs_generic)."""
+    item = {"retailer": "walmart", "identifier": "https://www.walmart.com/ip/12345?athbdg=L1200&adsRedirect=true",
+            "product_url": ""}
+    result = notifier.resolve_product_url(item)
+    assert result == "https://www.walmart.com/ip/12345"
+    assert "?" not in result
+
+
+def test_resolve_product_url_strips_tracking_from_constructed_target_link():
+    item = {"retailer": "target", "identifier": "1011209279", "product_url": ""}
+    result = notifier.resolve_product_url(item)
+    assert result == "https://www.target.com/p/-/A-1011209279"
+    assert "?" not in result
+
+
+def test_resolve_product_url_no_query_string_is_a_noop():
+    item = {"retailer": "amazon", "identifier": "B0D7QJXK9P", "product_url": ""}
+    result = notifier.resolve_product_url(item)
+    assert result == "https://www.amazon.com/dp/B0D7QJXK9P"
+
+
 def test_resolve_product_url_uses_explicit_url_first():
     item = {"retailer": "target", "identifier": "123", "product_url": "https://custom.example.com/x"}
     assert notifier.resolve_product_url(item) == "https://custom.example.com/x"
@@ -187,6 +222,42 @@ def test_discord_mention_prefix_ignored_without_id():
     config.set("discord_mention_type", "user")
     config.set("discord_mention_id", "")
     assert notifier.discord_mention_prefix() == ""
+
+
+def test_discord_mention_prefix_rejects_non_numeric_id():
+    """Regression guard for a reported bug: mentions came out as literal
+    unresolved text instead of actually pinging. One real cause: a
+    non-numeric value (e.g. a username typed by mistake) in the ID field
+    can never resolve to a real mention, so it must be skipped rather
+    than sent as broken-looking text."""
+    config.set("discord_mention_type", "user")
+    config.set("discord_mention_id", "some_username")
+    assert notifier.discord_mention_prefix() == ""
+
+
+def test_discord_mention_prefix_accepts_numeric_id():
+    config.set("discord_mention_type", "user")
+    config.set("discord_mention_id", "123456789012345678")
+    assert notifier.discord_mention_prefix() == "<@123456789012345678> "
+
+
+def test_send_discord_includes_allowed_mentions_field(monkeypatch, fake_response):
+    """Regression guard for the other real cause of the same bug report:
+    without an explicit allowed_mentions field, Discord can render
+    <@id>/<@&id> as literal unlinked text instead of an actual ping."""
+    config.set("discord_webhook_url", "https://discord.com/api/webhooks/fake")
+    config.set("discord_mention_type", "role")
+    config.set("discord_mention_id", "555555555555555555")
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["payload"] = json
+        return fake_response(status_code=204)
+
+    monkeypatch.setattr(notifier.requests, "post", fake_post)
+    notifier.send_discord("Restock alert!")
+    assert captured["payload"]["allowed_mentions"] == {"parse": ["users", "roles"]}
+    assert captured["payload"]["content"].startswith("<@&555555555555555555> ")
 
 
 def test_send_discord_includes_mention(monkeypatch, fake_response):

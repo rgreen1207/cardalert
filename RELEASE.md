@@ -7,6 +7,73 @@ match git tags of the same name (`v0.0.3`, etc.) — the in-app updater
 release means both: add an entry here, then tag the commit.
 
 ## [Unreleased]
+Nothing yet. Add entries here as changes land, then move them under a new
+version heading when you tag a release.
+
+## [0.0.5]
+Bug-fix release covering six issues found in real use, plus the root
+cause behind a whole prior session's worth of "already fixed but not
+working" reports, plus the Pokémon Center queue-alert fix below.
+
+### Added
+- "Always alert when the Pokémon Center queue is live" — confirmed the
+  existing alert path actually works end-to-end (it had zero test
+  coverage before now) and closed a real gap: polling used to stop
+  entirely outside the Mon-Thu 8am-1pm PST window, so a queue opening at
+  any other time could never be detected or alerted on at all. Now polls
+  every 30 minutes outside that window instead of not polling, so
+  "always" is actually true. Queue-live alerts also have no cooldown —
+  they fire again on every poll for as long as the queue stays open,
+  unlike restock alerts, which dedupe for 30 minutes.
+
+### Fixed
+- **The remove ("×") button on a retailer row in the add-product form
+  wrapped to its own line instead of staying on the same line as the
+  rest of the row.** Switched the row from CSS Grid to flexbox with
+  `flex-wrap: nowrap`, so it can't wrap regardless of container width.
+- **Adding multiple retailers to a product at once only kept the
+  first one** — investigated thoroughly, including simulating the exact
+  raw, interleaved form encoding a real browser sends (not just a
+  dict-based test helper), and the backend correctly handles this in
+  current code. The real gap: the Identifier field on each retailer row
+  had no `required` attribute, so a row left incomplete (e.g. retailer
+  selected but identifier never filled in) was silently dropped
+  server-side with zero feedback — which looks exactly like "retailers
+  vanishing" from the user's side. Now required client-side, so the
+  browser blocks submission instead of silently losing data.
+- **Target quantity appeared to reset to 1** — thoroughly tested the
+  full add → display → edit → re-display lifecycle with quantities of 3
+  and 5; found no bug in current code. Locked in with a permanent
+  regression test covering all four surfaces (add, listing page, edit
+  page, post-edit) so this can't silently regress later.
+- **The Dashboard showed "Error checking stock" for items that were
+  actually just out of stock.** Found a real bug: `check_target` used
+  direct dictionary indexing (`data["data"]["product"]`) with no
+  fallback, so any Target API response missing that structure (delisted
+  items, restricted items, occasional API quirks) raised an uncaught
+  `KeyError`, which got logged as a generic error rather than the more
+  accurate "not found." Switched to defensive `.get()` access.
+- **Amazon (and other retailer) links in alerts carried tracking
+  parameters** instead of a clean product URL. Added URL stripping that
+  removes the query string and fragment from every resolved link,
+  applied whether the URL came from the identifier field, the explicit
+  "Product URL" field, or was constructed from an ASIN/TCIN. Deliberately
+  exempted Best Buy's search link, since its `?st=...` parameter is the
+  actual search query, not tracking data — stripping it would have left
+  a dead search page.
+- **Discord @mentions rendered as literal `<@id>` text instead of
+  actually pinging.** Found two real, independent causes and fixed both:
+  (1) the webhook payload never included an `allowed_mentions` field,
+  and without it Discord can render mention syntax as plain unlinked
+  text instead of resolving it; (2) the mention ID field wasn't
+  validated as numeric, so a non-numeric value (e.g. a username typed by
+  mistake instead of the actual snowflake ID) could never have resolved
+  to a real mention regardless of the payload fix. Both are now handled:
+  `allowed_mentions` is always sent, and a non-numeric ID is skipped
+  entirely rather than sent as broken-looking text, with the Settings
+  page's help text now explicit about needing the numeric ID.
+
+## [0.0.4]
 ### Changed
 - Update-available text on Settings now shows on two lines
   ("current: X" / "new: Y") instead of one, and there's a bit more

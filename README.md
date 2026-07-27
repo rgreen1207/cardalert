@@ -156,15 +156,21 @@ or `other`. This only affects which subreddits the signal scraper checks.
 Every retailer poller already works for any product regardless of game.
 
 ## Pokémon Center schedule
-Hardcoded to Monday through Thursday, 8am to 1pm PST, every 10 minutes,
-skipped entirely outside that window. Change it in `scheduler.py` if you
-need something different.
+Polls every 10 minutes Monday through Thursday, 8am to 1pm PST (when
+restocks and queues most often happen), and every 30 minutes the rest of
+the time. It's never fully stopped, so a queue that opens outside the
+usual window still gets caught, just checked less often, since the
+"queue is live" alert is meant to fire whenever it's true, any time. A
+queue-live alert has no cooldown and fires again on every poll for as
+long as the queue stays open, unlike restock alerts, which dedupe for 30
+minutes. Change the constants in `scheduler.py` if you need something
+different.
 
 ## Versioning
-Current version: **v0.0.3**. Changes are logged in [`RELEASE.md`](RELEASE.md)
+Current version: **v0.0.5**. Changes are logged in [`RELEASE.md`](RELEASE.md)
 as they land, under an "Unreleased" heading; cutting a release means
 moving that heading's entries under a new version number and tagging the
-commit (`git tag v0.0.4`, etc.) — the in-app updater checks tags, so a
+commit (`git tag v0.0.6`, etc.) — the in-app updater checks tags, so a
 release isn't "real" for update purposes until it's tagged, not just
 described in RELEASE.md.
 
