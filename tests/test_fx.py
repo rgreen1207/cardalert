@@ -72,6 +72,42 @@ def test_get_rate_total_failure_falls_back_to_one(monkeypatch):
     assert result["stale"] is True
 
 
+def test_get_rate_survives_malformed_non_json_response(monkeypatch):
+    """Regression guard for the reported bug: a 500 on /products. The
+    exchange-rate API returning something that isn't valid JSON (rate
+    limiting, a proxy error page, a network hiccup mid-response) must not
+    crash — every page that shows a price calls this on every load
+    whenever the currency isn't USD, so an uncaught exception here takes
+    down the whole page, not just the currency conversion."""
+    import json
+
+    class MalformedResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            raise json.JSONDecodeError("bad json", "not json", 0)
+
+    monkeypatch.setattr(fx.requests, "get", lambda *a, **k: MalformedResponse())
+    result = fx.get_rate("GBP")  # must not raise
+    assert result["rate"] == 1.0
+    assert result["stale"] is True
+
+
+def test_get_rate_survives_unexpected_response_shape(monkeypatch, fake_response):
+    """A 200 with valid JSON but a shape the code doesn't expect (e.g. an
+    error body instead of a rates object) must also degrade gracefully,
+    not raise."""
+    monkeypatch.setattr(fx.requests, "get", lambda *a, **k: fake_response(
+        json_data={"error": "rate limited"}  # no "rates" key at all
+    ))
+    result = fx.get_rate("GBP")
+    assert result["rate"] == 1.0
+    assert result["stale"] is True
+
+
 def test_usd_to_display_conversion(monkeypatch, fake_response):
     monkeypatch.setattr(fx.requests, "get", lambda *a, **k: fake_response(
         json_data={"rates": {"GBP": 0.80}}

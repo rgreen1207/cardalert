@@ -18,6 +18,25 @@ def test_send_discord_success(monkeypatch, fake_response):
     assert result["status"] == 204
 
 
+def test_send_discord_strips_stray_whitespace_in_stored_url(monkeypatch, fake_response):
+    """Even if a webhook URL with trailing whitespace ends up stored
+    (e.g. set directly via .env rather than through config.set, which
+    already strips), send_discord itself must still tolerate it rather
+    than passing a broken URL to requests."""
+    import db
+    db.set_setting("discord_webhook_url", "https://discord.com/api/webhooks/fake\n")
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["url"] = url
+        return fake_response(status_code=204)
+
+    monkeypatch.setattr(notifier.requests, "post", fake_post)
+    result = notifier.send_discord("test message")
+    assert result["ok"] is True
+    assert captured["url"] == "https://discord.com/api/webhooks/fake"  # no trailing newline reached requests
+
+
 def test_send_discord_failure_status(monkeypatch, fake_response):
     config.set("discord_webhook_url", "https://discord.com/api/webhooks/fake")
     monkeypatch.setattr(notifier.requests, "post", lambda *a, **k: fake_response(status_code=404, text="Unknown Webhook"))

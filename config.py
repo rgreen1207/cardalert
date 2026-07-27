@@ -53,7 +53,10 @@ def get(key: str) -> str:
 def set(key: str, value: str):
     if key not in _KEYS:
         raise KeyError(f"Unknown config key: {key}")
-    db.set_setting(key, value or "")
+    # Strips whitespace so a copy-pasted webhook URL/token with a trailing
+    # space or newline (common from mobile clipboards) doesn't silently
+    # break requests that use it later.
+    db.set_setting(key, (value or "").strip())
 
 
 def all_values() -> dict:
