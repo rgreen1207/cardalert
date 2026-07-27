@@ -49,6 +49,9 @@ STATUS_LABELS = {
     "NOT_FOUND": "Not found",
     "PARSE_FAILED": "Couldn't read page",
     "UNKNOWN": "Unknown",
+    "BLOCKED_OR_KEY_INVALID": "Blocked by retailer",
+    "RATE_LIMITED": "Rate limited, will retry",
+    "UNEXPECTED_RESPONSE": "Unexpected response",
 }
 
 

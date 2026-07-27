@@ -82,9 +82,23 @@ def poll_one(retailer_row: dict):
     try:
         result = fn(retailer_row["identifier"])
     except Exception as e:
+        # The dashboard only ever shows a masked, generic label for this
+        # (see display.status_label) — the actual exception goes to the
+        # console/systemd journal here, and into error_detail below,
+        # which the API responses (e.g. /api/items) include verbatim, so
+        # it's inspectable via a browser's Network tab without ever
+        # appearing in the rendered page itself.
+        print(f"[scheduler] {retailer_row['retailer']} poll failed for "
+              f"retailer_id={retailer_row['id']}:", repr(e))
         db.log_status(retailer_row["id"], in_stock=False, price=None, over_msrp_pct=None,
-                      ignored_over_price=False, raw_status=f"ERROR: {e}")
+                      ignored_over_price=False, raw_status=f"ERROR: {e}",
+                      error_detail=f"{type(e).__name__}: {e}")
         return
+
+    error_detail = result.get("error_detail")
+    if error_detail:
+        print(f"[scheduler] {retailer_row['retailer']} retailer_id={retailer_row['id']} "
+              f"returned {result.get('raw_status')}:", error_detail)
 
     price = result.get("price")
     over_pct = None
@@ -98,6 +112,7 @@ def poll_one(retailer_row: dict):
         retailer_row["id"], in_stock=result["in_stock"], price=price,
         over_msrp_pct=over_pct, ignored_over_price=ignored,
         raw_status=result.get("raw_status", ""),
+        error_detail=error_detail,
     )
 
     if result["in_stock"] and not ignored:

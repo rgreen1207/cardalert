@@ -21,6 +21,12 @@
 
   <section class="panel">
     <h2>FAQ</h2>
+    <h3>My Discord mention isn't actually pinging anyone</h3>
+    <p class="hint">Use "Send test alert" and check what it reports, it now says exactly which mention (if any) was included. If it says a mention was included but nobody got pinged in Discord: for role mentions, the role itself needs "Allow anyone to @mention this role" turned on (right-click the role in Server Settings → Roles → the role → General), Card Alert can send the correct mention syntax, but Discord still won't ping an unmentionable role no matter what. For user mentions, double check the ID is the numeric ID from "Copy ID," not a username, a non-numeric value is skipped rather than sent as broken text, and the test result will say so directly.</p>
+
+    <h3>Why does my Target item show "Blocked by retailer" or "Rate limited, will retry"?</h3>
+    <p class="hint">Target's poller uses a fixed API key embedded in the code, the same kind of key you'd see if you opened Target's own site in a browser and watched its network requests. Target occasionally rotates or rate-limits these. "Blocked by retailer" means Target returned a 401/403, most likely the key needs updating, not that anything about your specific product is wrong. "Rate limited, will retry" means a 429, it'll recover on its own on the next poll. Both are shown distinctly from a generic error, and distinctly from "Not found" (which means Target responded fine, just without the usual stock info, e.g. for a delisted or restricted item) — check GitHub Issues if "Blocked by retailer" doesn't clear up after a while, since that one may need an actual code update.</p>
+
     <h3>How does the Pokémon Center queue alert work?</h3>
     <p class="hint">Whenever a Pokémon Center product is behind Queue-it's wait room, Card Alert alerts you that the queue is live, using whichever channels that product has configured, the same way a restock does. Unlike restock alerts, this one has no cooldown, it fires again on every poll for as long as the queue stays open, since the point is to always know it's live, not just the first time. Polling for this happens every 10 minutes Mon-Thu 8am-1pm PST (when queues most often happen) and every 30 minutes the rest of the time, so a queue opening outside that window still gets caught.</p>
 

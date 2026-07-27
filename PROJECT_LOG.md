@@ -153,6 +153,60 @@ in-window and never-fully-blocked-outside-window behavior. Ryan folded
 this into v0.0.5 alongside the six bug fixes above rather than a
 separate version.
 
+## Redesign + Target error visibility, v0.0.6 (2026-07-27)
+Ryan asked for three things, folded into v0.0.6:
+1. **Frontend redesign** using the frontend-design skill, aimed at "more
+   inviting, less blocky, streamlined so new users don't feel
+   overwhelmed." Followed the skill's brainstorm-then-critique process
+   before building: grounded the identity in the actual subject (trading
+   card collectors, holographic foil) rather than defaulting to one of
+   the three AI-cliché looks the skill warns about (cream+terracotta+serif,
+   near-black+single-accent, broadsheet-hairline). Landed on a warm
+   plum-navy palette (`--bg: #1c1730`, distinctly purple-hued, not
+   near-black) with two named accents (gold `#f0b429`, mint `#5eead4`),
+   Fraunces for headings + Plus Jakarta Sans for body text (kept IBM Plex
+   Mono for data/prices, that was never the actual complaint). Signature
+   element: a slim gold-to-mint gradient bar along every panel's top edge,
+   a nod to foil catching light — the one bold repeated move, kept
+   restrained everywhere else per the skill's "spend your boldness in one
+   place" guidance. Generous border-radius and soft shadows replace hard
+   1px borders as the primary way panels separate from the background.
+   **Every existing CSS class name was preserved** — the whole visual
+   transformation happens through `static/style.css` alone, no template
+   restructuring needed except the progressive-disclosure change below.
+2. **Progressive disclosure on the add-product form** — price tolerance
+   (`max_pct_over_msrp`) and alert channels are now inside a `<details>`
+   "More options" toggle in `templates/products.html`, since both have
+   sensible defaults and don't need to be visible for a first-time add.
+   Locked in with a test that the disclosure exists and contains exactly
+   those two fields.
+3. **Status-light legend** — a small key on the Dashboard explaining what
+   green/gold/grey lamps mean, since the colors alone were never
+   self-explanatory to a new user.
+4. **Target error visibility split** — real errors (blocked, rate
+   limited, malformed response, any unhandled exception) now: (a) print
+   to console/systemd journal via `scheduler.py`'s `poll_one`, (b) get
+   stored in a new `status_log.error_detail` column (migration added,
+   `CURRENT_SCHEMA_VERSION` bumped to 4) and returned verbatim in
+   `/api/items` (inspectable via a browser's Network tab), while (c) the
+   rendered dashboard/products HTML only ever shows the masked category
+   label from `display.status_label`. Verified the actual split with a
+   dedicated integration test — logs a status with a distinctive error
+   string, confirms it's present in the `/api/items` JSON but absent from
+   both rendered pages' HTML.
+- Made the same `str_replace` merge mistake twice more this session
+  (matching only a heading/lead-in line and losing the content that
+  followed it) — happened in RELEASE.md twice and once in a test file.
+  **Pattern to watch for**: when a `str_replace`'s `old_str` is just a
+  single short line (a heading, a `def` line) that has substantial
+  content following it, always re-view the file immediately after to
+  confirm the trailing content is still attached to something coherent,
+  don't assume the replace only touched what was intended.
+- Full regression before shipping: 182 tests passing, bandit clean,
+  shellcheck clean, every page verified live (200 status, correct
+  markup for the new disclosure/legend elements), CSS verified to parse
+  with zero syntax errors (133 rules).
+
 ## Six real bugs found and fixed, v0.0.4 → v0.0.5 (2026-07-27)
 Ryan reported six bugs in one message. Investigated each individually
 rather than assuming — three were genuine code bugs, fixed; three were

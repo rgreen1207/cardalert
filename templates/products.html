@@ -21,6 +21,7 @@
 
   <section class="panel panel--form">
     <h2>Add a product to watch</h2>
+    <p class="setup-intro">Give it a name, pick a game, set the most you're willing to pay, and attach at least one retailer. Everything else is optional and already has a sensible default.</p>
     <form method="post" action="/products/add" class="add-form">
       <label>Name
         <input type="text" name="name" placeholder="Prismatic Evolutions SPC" required>
@@ -37,18 +38,6 @@
         <span class="label-row">Max price / MSRP ({{ currency_symbol }}) <span class="tip" title="This is the price you never want to pay over, across every retailer attached below. If a restock's price is above this, it will NOT alert you.">?</span></span>
         <input type="number" name="msrp" step="0.01" placeholder="119.99" required>
       </label>
-      <label>
-        <span class="label-row">Allow up to (%) over that price <span class="tip" title="0 = never alert above your max price. e.g. 10 = allow up to 10% over before it's ignored.">?</span></span>
-        <input type="number" name="max_pct_over_msrp" value="0" step="1">
-      </label>
-      <label class="checkbox-field">
-        <span class="label-row">Alert via <span class="tip" title="Pick as many as you want. You'll get the alert on every channel checked, whichever retailer triggers it, plus it always shows on the Dashboard regardless.">?</span></span>
-        <span class="checkbox-group">
-          {% for c in push_channels %}
-          <label class="checkbox-option"><input type="checkbox" name="notify_channels" value="{{ c }}"> {{ channel_display[c] }}</label>
-          {% endfor %}
-        </span>
-      </label>
 
       <div class="retailer-rows-wrapper">
         <span class="label-row">Retailers to watch <span class="tip" title="Attach as many retailers as you want. This product alerts you the moment ANY one of them has it in stock, each checked independently.">?</span></span>
@@ -64,6 +53,24 @@
         </div>
         <button type="button" id="add-retailer-row">+ Add another retailer</button>
       </div>
+
+      <details class="more-options">
+        <summary>More options — price tolerance and where alerts go</summary>
+        <div class="more-options-grid">
+          <label>
+            <span class="label-row">Allow up to (%) over that price <span class="tip" title="0 = never alert above your max price. e.g. 10 = allow up to 10% over before it's ignored.">?</span></span>
+            <input type="number" name="max_pct_over_msrp" value="0" step="1">
+          </label>
+          <label class="checkbox-field">
+            <span class="label-row">Alert via <span class="tip" title="Pick as many as you want. You'll get the alert on every channel checked, whichever retailer triggers it, plus it always shows on the Dashboard regardless.">?</span></span>
+            <span class="checkbox-group">
+              {% for c in push_channels %}
+              <label class="checkbox-option"><input type="checkbox" name="notify_channels" value="{{ c }}"> {{ channel_display[c] }}</label>
+              {% endfor %}
+            </span>
+          </label>
+        </div>
+      </details>
 
       <button type="submit" class="submit-wide">Add to watchlist</button>
     </form>

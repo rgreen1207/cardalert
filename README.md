@@ -167,10 +167,10 @@ minutes. Change the constants in `scheduler.py` if you need something
 different.
 
 ## Versioning
-Current version: **v0.0.5**. Changes are logged in [`RELEASE.md`](RELEASE.md)
+Current version: **v0.0.6**. Changes are logged in [`RELEASE.md`](RELEASE.md)
 as they land, under an "Unreleased" heading; cutting a release means
 moving that heading's entries under a new version number and tagging the
-commit (`git tag v0.0.6`, etc.) — the in-app updater checks tags, so a
+commit (`git tag v0.0.7`, etc.) — the in-app updater checks tags, so a
 release isn't "real" for update purposes until it's tagged, not just
 described in RELEASE.md.
 

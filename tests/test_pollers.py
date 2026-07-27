@@ -56,6 +56,58 @@ def test_amazon_invalid_identifier():
 
 # --- Target ---
 
+def test_target_blocked_or_key_invalid_returns_distinct_status(monkeypatch, fake_response):
+    """Follow-up regression guard: after fixing the missing-product-key
+    crash, Target reportedly still showed 'Error checking stock.' This
+    covers the other real failure mode — a 401/403 from Target itself,
+    which most likely means the poller's hardcoded redsky API key has
+    been rotated or blocked, not that any particular product is broken.
+    This must surface as a distinct, diagnosable status, not get
+    swallowed into a generic scheduler-level 'ERROR: ...'."""
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(status_code=403, text="Forbidden by Target"))
+    result = pollers.check_target("1011209279")
+    assert result["raw_status"] == "BLOCKED_OR_KEY_INVALID"
+    assert result["in_stock"] is False
+    assert "Forbidden by Target" in result["error_detail"]
+
+
+def test_target_401_also_returns_blocked_status(monkeypatch, fake_response):
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(status_code=401))
+    result = pollers.check_target("1011209279")
+    assert result["raw_status"] == "BLOCKED_OR_KEY_INVALID"
+    assert "error_detail" in result
+
+
+def test_target_rate_limited_returns_distinct_status(monkeypatch, fake_response):
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(status_code=429, text="Too many requests"))
+    result = pollers.check_target("1011209279")
+    assert result["raw_status"] == "RATE_LIMITED"
+    assert "Too many requests" in result["error_detail"]
+
+
+def test_target_non_json_response_returns_distinct_status(monkeypatch):
+    """A 200 response whose body isn't valid JSON (e.g. an HTML
+    block/interstitial page instead of the expected API response) must
+    also surface as something diagnosable, not a raw exception string."""
+    class HtmlResponse:
+        status_code = 200
+        text = "<html>Access Denied - unusual traffic detected</html>"
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            import json
+            raise json.JSONDecodeError("not json", "<html>blocked</html>", 0)
+
+    import pollers as pollers_module
+    import unittest.mock as mock
+    with mock.patch.object(pollers_module.requests, "get", return_value=HtmlResponse()):
+        result = pollers_module.check_target("1011209279")
+    assert result["raw_status"] == "UNEXPECTED_RESPONSE"
+    assert "unusual traffic" in result["error_detail"]
+
+
 def test_target_missing_product_key_returns_not_found_instead_of_crashing(monkeypatch, fake_response):
     """Regression guard for a reported bug: the dashboard showed 'Error
     checking stock' for items that were actually just out of stock or

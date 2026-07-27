@@ -10,6 +10,58 @@ release means both: add an entry here, then tag the commit.
 Nothing yet. Add entries here as changes land, then move them under a new
 version heading when you tag a release.
 
+## [0.0.6]
+A redesign pass plus one diagnostics improvement: the app finally has a
+real visual identity instead of a bare ops-dashboard look, and Target's
+poller errors are now debuggable without ever leaking raw error text into
+the rendered pages.
+
+### Added
+- Redesigned the whole app with a genuine visual identity instead of a
+  bare ops-dashboard look — a warm plum-navy palette with gold and mint
+  accents (inspired by holographic card foil, not a generic dark-mode
+  default), Fraunces for headings and Plus Jakarta Sans for body text,
+  generous rounded corners and soft shadows on every panel instead of
+  hard borders, and pill-shaped buttons/tabs throughout.
+- The add-product form now shows only the essential fields (name, game,
+  quantity, max price, retailers) by default; price tolerance and alert
+  channels are tucked behind a "More options" disclosure, since both
+  already have sensible defaults and don't need to be visible for a
+  first-time add.
+- A status-light legend on the Dashboard explaining what each lamp color
+  means (in stock/alerted, in stock but over price cap, everything else),
+  since the colors alone weren't self-explanatory.
+- Target's poller errors (blocked/rate-limited/malformed response) now
+  log the real detail to the console/systemd journal and include it
+  verbatim in the JSON API responses (inspectable via a browser's Network
+  tab), while the rendered dashboard/products pages only ever show a
+  masked, generic label. Verified this split explicitly: added an
+  integration test confirming the raw error text never appears in
+  rendered HTML but does appear in the `/api/items` response.
+
+### Changed
+- "Send test alert" now reports exactly which mention (if any) it
+  applied, instead of just "Sent" with no visibility into whether the
+  mention rule actually fired — verified the full save-then-test flow
+  end to end through the real HTTP endpoints (not just the internal
+  function) and confirmed the mention is correctly built and sent. If a
+  role mention still doesn't ping in Discord despite showing as applied,
+  that's almost always the role's own "Allow anyone to @mention this
+  role" setting on Discord's side, not something this app controls —
+  documented in the Help page.
+- Target's poller now distinguishes *why* a check failed instead of
+  collapsing everything into "Error checking stock": a 401/403 (most
+  likely the hardcoded API key needs rotating) shows as "Blocked by
+  retailer," a 429 shows as "Rate limited, will retry," and a response
+  that isn't valid JSON shows as "Unexpected response" — separate from
+  "Not found," which means Target responded fine, just without the usual
+  stock fields (e.g. a delisted item). This sandbox can't reach Target's
+  real API to test live (confirmed: the network proxy here blocks
+  `redsky.target.com` outright), so if "Blocked by retailer" shows up
+  consistently, the embedded API key most likely needs an actual update —
+  that's a real, expected maintenance point for this specific poller, not
+  a bug to chase further without seeing the real response.
+
 ## [0.0.5]
 Bug-fix release covering six issues found in real use, plus the root
 cause behind a whole prior session's worth of "already fixed but not

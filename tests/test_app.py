@@ -294,6 +294,56 @@ def test_discord_test_endpoint_fires_when_configured(client, monkeypatch):
     assert response.json()["ok"] is True
 
 
+def test_discord_test_endpoint_reports_mention_applied(client, monkeypatch):
+    """Regression guard for a reported bug: the test button gave no way
+    to verify whether a mention was actually applied — it should
+    'adhere to the same rules' as a real alert, and now the response
+    says exactly what mention (if any) went out, so this is verifiable
+    from the UI instead of a guess."""
+    client.post("/setup/skip")
+    client.post("/settings/save", data={
+        "currency": "USD",
+        "discord_webhook_url": "https://discord.com/api/webhooks/fake",
+        "discord_mention_type": "role",
+        "discord_mention_id": "999888777666555444",
+    })
+    import notifier
+    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+    response = client.post("/settings/test-discord")
+    data = response.json()
+    assert data["mention_applied"] == "role ID 999888777666555444"
+
+
+def test_discord_test_endpoint_reports_skipped_non_numeric_mention(client, monkeypatch):
+    client.post("/setup/skip")
+    client.post("/settings/save", data={
+        "currency": "USD",
+        "discord_webhook_url": "https://discord.com/api/webhooks/fake",
+        "discord_mention_type": "user",
+        "discord_mention_id": "not_a_real_id",
+    })
+    import notifier
+    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+    response = client.post("/settings/test-discord")
+    data = response.json()
+    assert data["mention_applied"] is None
+    assert "skipped" in data["mention_skipped_reason"].lower()
+
+
+def test_discord_test_endpoint_reports_no_mention_when_none_configured(client, monkeypatch):
+    client.post("/setup/skip")
+    client.post("/settings/save", data={
+        "currency": "USD",
+        "discord_webhook_url": "https://discord.com/api/webhooks/fake",
+    })
+    import notifier
+    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+    response = client.post("/settings/test-discord")
+    data = response.json()
+    assert data["mention_applied"] is None
+    assert "mention_skipped_reason" not in data
+
+
 def test_verify_shopify_endpoint(client, monkeypatch, fake_response):
     client.post("/setup/skip")
     import pollers
@@ -458,6 +508,31 @@ def test_products_page_never_500s_when_fx_fetch_returns_malformed_data(client, m
         assert response.status_code == 200
 
 
+def test_products_page_has_progressive_disclosure_for_advanced_fields(client):
+    """The price-tolerance and alert-channel fields have sensible
+    defaults and don't need to be visible on first load — confirms
+    they're tucked inside the collapsible 'More options' section rather
+    than cluttering the default view for a first-time user."""
+    client.post("/setup/skip")
+    html = client.get("/products").text
+    assert '<details class="more-options">' in html
+    more_options_start = html.index('<details class="more-options">')
+    more_options_end = html.index("</details>", more_options_start)
+    section = html[more_options_start:more_options_end]
+    assert 'name="max_pct_over_msrp"' in section
+    assert 'name="notify_channels"' in section
+
+
+def test_dashboard_shows_status_legend(client):
+    """Regression guard: the lamp colors on the dashboard need an
+    explanation, not left as an unlabeled mystery."""
+    client.post("/setup/skip")
+    html = client.get("/").text
+    assert "alert sent" in html
+    assert "over your price cap" in html
+    assert "Sold out, paused, or not checked yet" in html
+
+
 def test_ads_config_removed_cleanly(client):
     """Confirms the removed AdSense feature left no trace: no script
     tags, no leftover context keys causing template errors."""
@@ -466,3 +541,28 @@ def test_ads_config_removed_cleanly(client):
         html = client.get(path).text
         assert "adsense" not in html.lower()
         assert "adsbygoogle" not in html
+
+
+def test_error_detail_reaches_api_but_not_rendered_html(client):
+    """Regression guard: the actual error should be inspectable via the
+    API (what you'd see in a browser's Network tab) while the rendered
+    dashboard/products pages only ever show a masked, generic label —
+    never the raw error text."""
+    client.post("/setup/skip")
+    _add_product(client)
+    retailer_id = client.get("/api/items").json()[0]["retailers"][0]["id"]
+
+    import db
+    db.log_status(retailer_id, in_stock=False, price=None, over_msrp_pct=None,
+                   ignored_over_price=False, raw_status="BLOCKED_OR_KEY_INVALID",
+                   error_detail="HTTP 403 from Target: Forbidden by WAF rule 98765")
+
+    api_response = client.get("/api/items").json()
+    status = api_response[0]["retailers"][0]["last_status"]
+    assert status["error_detail"] == "HTTP 403 from Target: Forbidden by WAF rule 98765"
+
+    dashboard_html = client.get("/").text
+    products_html = client.get("/products").text
+    assert "WAF rule 98765" not in dashboard_html
+    assert "WAF rule 98765" not in products_html
+    assert "Blocked by retailer" in dashboard_html  # the masked label is what shows instead
