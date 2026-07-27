@@ -1,6 +1,6 @@
 # Card Alert Source-Available License v1.0
 
-Copyright (c) 2026 [Your Name / Business Name]
+Copyright (c) 2026 Ryan Green
 
 ## Summary (not a substitute for the terms below)
 You can read this code, self-host it, modify it for your own use, and run
