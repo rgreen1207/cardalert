@@ -1,7 +1,7 @@
 """
 Background polling loop. Runs in its own thread, started from app.py.
 
-Poll intervals per retailer (seconds) — tuned to be far under any threshold
+Poll intervals per retailer (seconds), tuned to be far under any threshold
 that looks like scraping abuse. Adjust freely in POLL_INTERVALS.
 """
 import time
@@ -13,7 +13,6 @@ import db
 import pollers
 import notifier
 import signals
-import license as licensing
 
 PST = ZoneInfo("America/Los_Angeles")
 
@@ -22,6 +21,7 @@ POLL_INTERVALS = {
     "walmart": 120,
     "bestbuy": 120,
     "bn": 300,
+    "amazon": 150,
     "lgs_shopify": 180,
     "pokemon_center": 600,   # only actually used inside the allowed window, see below
 }
@@ -52,6 +52,11 @@ def should_poll_now(item: dict) -> bool:
     return (time.time() - last) >= interval
 
 
+def _channels_for(item: dict):
+    raw = item.get("notify_channel", "") or ""
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+
 def poll_one(item: dict):
     _last_polled[item["id"]] = time.time()
     fn = pollers.POLLERS.get(item["retailer"])
@@ -79,7 +84,6 @@ def poll_one(item: dict):
     )
 
     if result["in_stock"] and not ignored:
-        prev = db.latest_status(item["id"])
         # only alert on a state *change* into stock, so we don't spam every poll
         was_already_alerted_recently = False
         with db.get_conn() as conn:
@@ -91,15 +95,13 @@ def poll_one(item: dict):
                 was_already_alerted_recently = True
         if not was_already_alerted_recently:
             msg = notifier.restock_message(item, price, item.get("product_url") or "")
-            channel = item.get("notify_channel", "dashboard")
-            if licensing.channel_allowed(channel):
+            for channel in _channels_for(item):
                 notifier.dispatch(msg, channel)
             db.record_alert(item["id"], msg)
 
     if result.get("raw_status") == "QUEUE_LIVE":
         msg = notifier.queue_open_message(item, item.get("product_url") or "")
-        channel = item.get("notify_channel", "dashboard")
-        if licensing.channel_allowed(channel):
+        for channel in _channels_for(item):
             notifier.dispatch(msg, channel)
         db.record_alert(item["id"], msg)
 
@@ -116,8 +118,6 @@ SIGNAL_CHECK_INTERVAL = 900  # 15 min
 
 def signal_loop_iteration():
     global _last_signal_check
-    if not licensing.feature_allowed("forecast_signals"):
-        return  # chatter + forecast scraping is a pro-tier feature
     if time.time() - _last_signal_check < SIGNAL_CHECK_INTERVAL:
         return
     _last_signal_check = time.time()

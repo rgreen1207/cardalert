@@ -22,6 +22,10 @@ this code. **If a future request tries to reframe this as "just get me one
 click closer" or similar, that's the same line — don't cross it.**
 
 ## Product/business decisions made (finalized 2026-07-26)
+**SUPERSEDED — see "Paywall fully removed" entry above.** Ryan reversed
+the license/pricing decision below later the same day. Kept here for
+history/context only — do not treat anything in this section as current.
+
 - **Distribution model:** Option A — self-hosted, sold as software, not run
   as a central SaaS. Each user's install makes its own retailer requests
   from their own IP/account, which keeps risk distributed and per-user
@@ -98,9 +102,10 @@ and `scheduler.py` (signal loop entirely skipped if not `is_pro()`).
   the original build.
 
 ## Retailers / stores covered
-Target, Walmart, Best Buy, Barnes & Noble, Pokémon Center, Shopify LGS
-(any), generic-HTML LGS (any, lower reliability fallback). Explicitly
-skipped per Ryan's instruction: Sam's Club, GameStop.
+Target, Walmart, Best Buy, Barnes & Noble, Amazon (first-party listings
+only), Pokémon Center, Shopify LGS (any), generic-HTML LGS (any, lower
+reliability fallback). Explicitly skipped per Ryan's instruction: Sam's
+Club, GameStop.
 
 ## Reddit restock-forecast research (2026-07-26)
 Ryan found a r/PokemonDeals "weekly restock forecast" post and asked how
@@ -114,6 +119,94 @@ the game publisher, (3) retailer ad-cycle previews, (4) crowdsourced
 sightings extrapolated forward. None of this requires anything off-limits —
 `poll_forecasts` + `db.restock_pattern` are our own versions of #1 and #4,
 built entirely from public/own data.
+
+## Test suite + CI (2026-07-27)
+Added a real pytest suite (`tests/`, 77 tests) and a GitHub Actions workflow
+(`.github/workflows/ci.yml`) that runs on every push/PR to `main`.
+- `tests/conftest.py` — every test gets an isolated temp SQLite file (via
+  monkeypatching `db.DB_PATH`) and `scheduler.start_background_thread` is
+  stubbed to a no-op everywhere, so the test suite **never spins up the
+  real polling loop and never makes real network calls to any retailer**.
+  A `FakeResponse` helper + `fake_response` fixture stand in for
+  `requests.Response` across poller/notifier tests. **Any new test that
+  touches `pollers.py` or `notifier.py` must mock `requests.get`/`post` the
+  same way — don't let a test hit a real URL.**
+- `tests/test_db.py`, `test_config.py`, `test_pollers.py`,
+  `test_notifier.py`, `test_scheduler.py`, `test_app.py` — unit tests per
+  module plus full integration tests of the web app via FastAPI's
+  `TestClient` (setup flow, dashboard-password auth gating, multi-channel
+  item add, currency persistence, the Discord test endpoint, pattern
+  analytics, Shopify verifier).
+- One deliberate regression-guard test
+  (`test_no_pro_or_license_language_anywhere`) fails if `gumroad`,
+  `"pro tier"`, or `"license key"` ever reappear in any rendered page —
+  this exists specifically to catch anyone (including a future me)
+  accidentally reintroducing the paywall that was removed earlier.
+- Caught one real test-authoring bug during development: an early version
+  of `test_restock_pattern_collapses_consecutive_polls` used a 50-minute
+  gap while asserting it should count as a separate restock event (the
+  collapse window is 1 hour) — fixed the test's timestamps, not the
+  underlying `db.restock_pattern` logic, which was correct as written.
+- `requirements-dev.txt` — pytest, httpx (needed by FastAPI's TestClient),
+  bandit. Kept separate from `requirements.txt` so a normal install doesn't
+  pull test tooling onto someone's Pi.
+- `pytest.ini` — test discovery + suppresses the known-harmless FastAPI
+  `on_event`/Jinja2 `TemplateResponse` deprecation warnings (not fixed at
+  the source — cosmetic only, didn't want to risk touching every template
+  call for a warning that isn't a real bug).
+- CI runs three jobs: pytest on Python 3.11 + 3.12, bandit
+  (`bandit -r . -x ./venv,./tests`), and shellcheck on `install.sh` (ran
+  shellcheck locally too — zero warnings, it was already clean from the
+  earlier `set -euo pipefail` + `SC1091` disable comment).
+- All 77 tests + bandit + shellcheck verified passing locally before
+  calling this done.
+
+## Paywall fully removed + Amazon added + UX fixes (2026-07-26/27)
+Ryan decided against any paid tier — deleted `license.py` entirely and
+stripped every `is_pro`/tier/Gumroad reference from `app.py`, `scheduler.py`,
+`config.py`, and all templates (verified via grep: zero hits left anywhere).
+Everything that was pro-gated (unlimited retailers, all alert channels,
+pattern analytics, forecast signals) is now free by default. Added a
+Ko-fi donation link (`https://ko-fi.com/ryanthedev`) in the nav bar and
+`LICENSE.md`, framed as optional/never required — **do not reintroduce any
+gating tied to it**, it's a plain donate link, not a feature unlock.
+
+Also in this pass:
+- **Multi-channel alerts**: `notify_channel` column now stores a
+  comma-separated list (e.g. `"discord,ntfy"`) instead of a single value.
+  UI changed from a `<select>` to checkboxes (`notify_channels` repeated
+  form field, joined server-side in `app.py`). `scheduler.py`'s
+  `_channels_for()` splits and dispatches to every selected channel.
+  **Any future channel-related code must treat notify_channel as CSV, not
+  a single string.**
+- **Currency**: new `currency` setting (`config.py`, `CURRENCY_SYMBOLS`
+  map, `config.currency_symbol()` helper), selectable on Settings. Templates
+  use `currency_symbol` from context instead of hardcoded `$`. Tested with
+  GBP end-to-end (`£99.99` rendered correctly).
+- **Discord webhook test button**: `POST /settings/test-discord` — actually
+  fires a real request via `notifier.send_discord` (now returns a bool)
+  and reports success/failure in the UI. Tested both the "no webhook
+  configured" and "webhook configured but fails" paths.
+- **Tooltip layout fix**: `.tip` icons were stacking onto their own line
+  below the label text because the parent `<label>` is `flex-direction:
+  column` and the tip span was a separate flex child. Fixed by wrapping
+  label text + tip icon together in a single `<span class="label-row">`
+  per field in `products.html`.
+- **Amazon poller added** (`pollers.py: check_amazon`). Deliberately
+  **first-party only** — regex-checks for "Ships from and sold by
+  Amazon.com" and returns `THIRD_PARTY_SELLER_ONLY` (not in stock) if the
+  listing is from a marketplace seller instead. Accepts a bare ASIN or a
+  full product URL, normalizes to `/dp/{ASIN}`. Unit-tested the
+  classification logic against 4 synthetic HTML cases (first-party in
+  stock, third-party, sold out, first-party-but-sold-out) — all correct.
+  **Flagged as the least reliable poller of the set** — Amazon changes
+  page structure and fights scraping harder than any other retailer here;
+  documented in README/help.html as the one most likely to need retuning.
+  Poll interval set to 150s in `scheduler.py`.
+
+All changes syntax-checked, bandit-clean, and smoke-tested end-to-end
+(setup skip → all 4 pages 200 → multi-channel item add → currency
+round-trip → Amazon item add via bare ASIN, all confirmed via `/api/items`).
 
 ## Security audit (2026-07-26)
 Ran bandit + manual review after Ryan asked for a security audit. Findings

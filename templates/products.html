@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Card Alert — Products</title>
+<title>Card Alert - Products</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -11,30 +11,13 @@
 <header class="board-header">
   <div class="board-title">
     <span class="lamp lamp--live"></span>
-    <h1>CARD ALERT — PRODUCTS</h1>
-  </div>
-  <div class="board-meta">
-    <span class="tier-badge {{ 'tier--pro' if is_pro else 'tier--free' }}">{{ 'PRO' if is_pro else 'FREE' }}</span>
+    <h1>CARD ALERT - PRODUCTS</h1>
   </div>
 </header>
 
 {% include "_nav.html" %}
 
 <main>
-
-  {% if error == 'retailer_limit' %}
-  <section class="panel panel--notice panel--error">
-    Free tier allows {{ free_retailer_limit }} distinct retailers — you're already using all of them.
-    Remove one, reuse an existing retailer, or upgrade to add more.
-  </section>
-  {% endif %}
-
-  {% if not is_pro %}
-  <section class="panel panel--notice">
-    Free tier: up to {{ free_retailer_limit }} distinct retailers, dashboard-only alerts.
-    <a href="#" class="upgrade-link">Upgrade for unlimited retailers, Discord/ntfy/Pushover/SMS alerts, pattern analytics, and restock forecasts.</a>
-  </section>
-  {% endif %}
 
   <section class="panel panel--form">
     <h2>Add a product to watch</h2>
@@ -52,8 +35,8 @@
           {% for r in retailers %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
         </select>
       </label>
-      <label>Identifier
-        <span class="tip" title="target: numeric TCIN from the URL &#10;walmart/bn/pokemon_center/lgs_generic: full product URL &#10;bestbuy: SKU number &#10;lgs_shopify: shopdomain.com/products/handle &#10;See the Help page for details.">?</span>
+      <label>
+        <span class="label-row">Identifier <span class="tip" title="target: numeric TCIN from the URL &#10;walmart/bn/pokemon_center/lgs_generic: full product URL &#10;bestbuy: SKU number &#10;amazon: ASIN or full product URL, only alerts when 'Ships from and sold by Amazon.com' &#10;lgs_shopify: shopdomain.com/products/handle &#10;See the Help page for details.">?</span></span>
         <input type="text" name="identifier" placeholder="TCIN / SKU / product URL / shop handle" required>
       </label>
       <label>Product URL
@@ -62,25 +45,28 @@
       <label>Target qty
         <input type="number" name="target_qty" value="1" min="1">
       </label>
-      <label>Max price / MSRP ($)
-        <span class="tip" title="This is the price you never want to pay over. If a restock's price is above this, it will NOT alert you.">?</span>
+      <label>
+        <span class="label-row">Max price / MSRP ({{ currency_symbol }}) <span class="tip" title="This is the price you never want to pay over. If a restock's price is above this, it will NOT alert you.">?</span></span>
         <input type="number" name="msrp" step="0.01" placeholder="119.99" required>
       </label>
-      <label>Allow up to (%) over that price
-        <span class="tip" title="0 = never alert above your max price. e.g. 10 = allow up to 10% over before it's ignored. Anything past this is silently skipped, not alerted.">?</span>
+      <label>
+        <span class="label-row">Allow up to (%) over that price <span class="tip" title="0 = never alert above your max price. e.g. 10 = allow up to 10% over before it's ignored. Anything past this is silently skipped, not alerted.">?</span></span>
         <input type="number" name="max_pct_over_msrp" value="0" step="1">
       </label>
-      <label>Alert via
-        <span class="tip" title="Fill in the matching credentials in .env first — see the Help page for setup steps per channel.">?</span>
-        <select name="notify_channel">
-          {% for c in channels %}<option value="{{ c }}">{{ c }}{{ ' (pro)' if c != 'dashboard' and not is_pro else '' }}</option>{% endfor %}
-        </select>
+      <label class="checkbox-field">
+        <span class="label-row">Alert via <span class="tip" title="Pick as many as you want. You'll get the alert on every channel checked, plus it always shows on the Dashboard regardless. Set credentials for each on the Settings page first.">?</span></span>
+        <span class="checkbox-group">
+          {% for c in push_channels %}
+          <label class="checkbox-option"><input type="checkbox" name="notify_channels" value="{{ c }}"> {{ c }}</label>
+          {% endfor %}
+        </span>
       </label>
       <button type="submit">Add to watchlist</button>
     </form>
     <p class="hint">
-      Identifier format by retailer — target: numeric TCIN from the product URL ·
+      Identifier format by retailer. target: numeric TCIN from the product URL ·
       walmart / bn / pokemon_center / lgs_generic: full product URL · bestbuy: SKU ·
+      amazon: ASIN or full product URL (first-party only) ·
       lgs_shopify: <span class="mono">shopdomain.com/products/handle</span> ·
       <a href="/help">full setup guide →</a>
     </p>
@@ -116,10 +102,10 @@
           <td>{{ item.name }}</td>
           <td class="mono">{{ item.game }}</td>
           <td class="mono">{{ item.retailer }}</td>
-          <td class="mono">{{ '$%.2f'|format(item.msrp) if item.msrp else '—' }}</td>
+          <td class="mono">{{ currency_symbol }}{{ '%.2f'|format(item.msrp) if item.msrp else '—' }}</td>
           <td class="mono">{{ item.max_pct_over_msrp }}%</td>
           <td class="mono">{{ item.remaining_qty }} / {{ item.target_qty }}</td>
-          <td class="mono">{{ item.notify_channel }}</td>
+          <td class="mono">{{ item.notify_channels_list|join(' + ') if item.notify_channels_list else 'dashboard only' }}</td>
           <td class="row-actions">
             <form method="post" action="/items/{{ item.id }}/mark_purchased" class="inline-form">
               <input type="number" name="qty" value="1" min="1" class="qty-input">
@@ -134,7 +120,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">No products added yet — use the form above.</td></tr>
+        <tr><td colspan="8" class="empty">No products added yet. Use the form above.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -155,8 +141,8 @@
     });
     const data = await res.json();
     out.textContent = data.is_shopify
-      ? `✅ Shopify-backed — use "lgs_shopify" with ${domain}/products/<handle>`
-      : `❌ Not detected as Shopify — try "lgs_generic" with the full product URL instead`;
+      ? `✅ Shopify-backed. Use "lgs_shopify" with ${domain}/products/<handle>`
+      : `❌ Not detected as Shopify. Try "lgs_generic" with the full product URL instead.`;
   });
 </script>
 </body>

@@ -1,18 +1,18 @@
 """
 Drop-signal aggregator.
 
-There's no reliable way to *predict* a restock — retailers don't publish
+There's no reliable way to *predict* a restock. Retailers don't publish
 timing. The "weekly forecast" posts people find on Reddit are compiled from
 public info: historical day/time clustering (Target skews Tue/Fri mornings,
 etc.), official set street-dates announced by the game publishers, retailer
 ad-cycle previews, and crowdsourced sightings extrapolated forward. None of
-that requires anything we shouldn't touch — this module does the same thing,
+that requires anything we shouldn't touch. This module does the same thing,
 generically, for free, using Reddit's public search JSON (no login, no API
 key needed for read-only search).
 
 Two signal types:
-1. Real-time chatter — "just went live" posts, same as before.
-2. Forecast posts — recurring "weekly restock forecast" threads that a
+1. Real-time chatter: "just went live" posts, same as before.
+2. Forecast posts: recurring "weekly restock forecast" threads that a
    subreddit's community already compiles; we just surface them on the
    dashboard as a heads-up, not treat them as gospel.
 """
@@ -22,7 +22,7 @@ import requests
 HEADERS = {"User-Agent": "cardalert-dashboard/1.0 (personal restock tracker)"}
 TIMEOUT = 10
 
-# Subreddits per game — extend freely. General deal-hunting subs are useful
+# Subreddits per game, extend freely. General deal-hunting subs are useful
 # across every game, so they're included for all.
 GAME_SUBREDDITS = {
     "pokemon": ["PokemonTCG", "PokeInvestments", "pkmntcgtrades", "PokemonDeals"],
@@ -87,7 +87,7 @@ def poll_chatter(games, cutoff_seconds=900):
 
 def poll_forecasts(games, cutoff_seconds=7 * 24 * 3600):
     """Recurring 'weekly restock forecast' threads. These are community
-    roundups, not confirmed schedules — surfaced as-is with a link, no
+    roundups, not confirmed schedules. Surfaced as-is with a link, no
     parsing of specific claims, since retailers don't guarantee any of it."""
     now = time.time()
     subs = set()

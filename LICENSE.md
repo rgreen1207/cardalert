@@ -3,11 +3,12 @@
 Copyright (c) 2026 Ryan Green
 
 ## Summary (not a substitute for the terms below)
-You can read this code, self-host it, modify it for your own use, and run
-it for yourself or your household/organization for free. You cannot take
-this code (modified or not) and sell it, resell it, or offer it as a paid
-hosted service to third parties. The paid "pro" tier of the official
-distribution is licensed separately and requires a valid license key.
+Card Alert is free. Every feature, no paid tier, no license key. You can
+read this code, self-host it, modify it for your own use, and run it for
+yourself or your household/organization for free. You cannot take this
+code (modified or not) and sell it, resell it, or offer it as a paid hosted
+service to third parties without permission. If you find it useful,
+donations are welcome but never required: https://ko-fi.com/ryanthedev
 
 ## Terms
 
@@ -22,10 +23,6 @@ distribution is licensed separately and requires a valid license key.
      modified version of it, in source or compiled form.
    - Offer this software (or a derivative) as a hosted service to third
      parties (SaaS), whether free or paid.
-   - Remove or circumvent the license-key verification mechanism in
-     `license.py` for the purpose of redistributing unlocked "pro" features
-     to others (running it for your own personal use without a key, using
-     only free-tier features, is fine and is what the free tier is for).
 
 3. **No warranty.** This software is provided "as is," without warranty of
    any kind. Retailer websites change without notice; pollers may break.

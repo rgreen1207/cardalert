@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Card Alert — Settings</title>
+<title>Card Alert - Settings</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -11,10 +11,7 @@
 <header class="board-header">
   <div class="board-title">
     <span class="lamp lamp--live"></span>
-    <h1>CARD ALERT — SETTINGS</h1>
-  </div>
-  <div class="board-meta">
-    <span class="tier-badge {{ 'tier--pro' if is_pro else 'tier--free' }}">{{ 'PRO' if is_pro else 'FREE' }}</span>
+    <h1>CARD ALERT - SETTINGS</h1>
   </div>
 </header>
 
@@ -26,11 +23,28 @@
   <section class="panel panel--notice panel--saved">Settings saved.</section>
   {% endif %}
 
+  <section class="panel panel--notice">
+    Card Alert is free. Every feature, no tiers. If it's useful,
+    <a href="{{ donate_url }}" target="_blank" class="upgrade-link">consider supporting development on Ko-fi</a>.
+  </section>
+
   <form method="post" action="/settings/save">
+
+    <section class="panel">
+      <h2>Currency</h2>
+      <select name="currency" class="wide-input">
+        {% for c in currencies %}<option value="{{ c }}" {{ 'selected' if values.currency == c else '' }}>{{ c }}</option>{% endfor %}
+      </select>
+    </section>
 
     <section class="panel">
       <h2>Discord <span class="cost-tag cost-tag--free">free</span></h2>
       <input type="password" name="discord_webhook_url" value="{{ values.discord_webhook_url }}" placeholder="https://discord.com/api/webhooks/..." class="wide-input" autocomplete="off">
+      <div class="test-row">
+        <button type="button" id="test-discord-btn">Send test alert</button>
+        <span id="test-discord-output" class="test-output"></span>
+      </div>
+      <p class="hint">Tests whatever's currently saved. Save this field first if you just changed it.</p>
     </section>
 
     <section class="panel">
@@ -58,15 +72,9 @@
     </section>
 
     <section class="panel">
-      <h2>Pro license</h2>
-      <input type="text" name="gumroad_product_id" value="{{ values.gumroad_product_id }}" placeholder="Gumroad product ID" class="wide-input" autocomplete="off">
-      <input type="password" name="cardalert_license_key" value="{{ values.cardalert_license_key }}" placeholder="License key" class="wide-input" autocomplete="off">
-    </section>
-
-    <section class="panel">
       <h2>Dashboard password <span class="cost-tag cost-tag--free">recommended</span></h2>
-      <p class="hint">Locks every page behind a password. Leave blank to keep the dashboard open to anyone who can reach it on your network (the previous default).</p>
-      <input type="password" name="dashboard_password" placeholder="Leave blank to keep unprotected" class="wide-input" autocomplete="new-password">
+      <p class="hint">Locks every page behind a password. Leave blank to keep the dashboard open to anyone who can reach it on your network (the default).</p>
+      <input type="password" name="dashboard_password" placeholder="Leave blank to keep unprotected / unchanged" class="wide-input" autocomplete="new-password">
     </section>
 
     <div class="setup-actions">
@@ -75,5 +83,17 @@
   </form>
 
 </main>
+
+<script>
+  document.getElementById('test-discord-btn').addEventListener('click', async () => {
+    const out = document.getElementById('test-discord-output');
+    out.textContent = 'Sending...';
+    const res = await fetch('/settings/test-discord', { method: 'POST' });
+    const data = await res.json();
+    out.textContent = data.ok
+      ? '✅ Sent. Check your Discord channel.'
+      : `❌ ${data.error || 'Failed to send. Check the webhook URL is saved and correct.'}`;
+  });
+</script>
 </body>
 </html>
