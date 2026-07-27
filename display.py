@@ -50,6 +50,7 @@ STATUS_LABELS = {
     "PARSE_FAILED": "Couldn't read page",
     "UNKNOWN": "Unknown",
     "BLOCKED_OR_KEY_INVALID": "Blocked by retailer",
+    "BLOCKED_BY_ANTIBOT": "Blocked by anti-bot protection",
     "RATE_LIMITED": "Rate limited, will retry",
     "UNEXPECTED_RESPONSE": "Unexpected response",
 }
