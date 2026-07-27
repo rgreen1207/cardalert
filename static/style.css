@@ -517,3 +517,10 @@ button.danger:hover { background: var(--coral-soft); border-color: var(--coral);
   color: var(--text);
 }
 .unsaved-bar.visible { display: flex; }
+
+.mention-field-label {
+  display: block;
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}

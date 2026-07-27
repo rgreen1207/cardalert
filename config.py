@@ -26,9 +26,10 @@ _KEYS = {
     "twilio_to_number": ("TWILIO_TO_NUMBER", ""),
     "bestbuy_api_key": ("BESTBUY_API_KEY", ""),
     "currency": ("CARDALERT_CURRENCY", "USD"),
-    "discord_mention_type": ("DISCORD_MENTION_TYPE", ""),  # "" | "user" | "role"
-    "discord_mention_id": ("DISCORD_MENTION_ID", ""),
+    "discord_mention_users": ("DISCORD_MENTION_USERS", ""),  # comma-separated user IDs
+    "discord_mention_roles": ("DISCORD_MENTION_ROLES", ""),  # comma-separated role IDs
     "target_api_key": ("TARGET_API_KEY", ""),
+    "pokemon_center_fast_check_seconds": ("POKEMON_CENTER_FAST_CHECK_SECONDS", "15"),
 }
 
 CURRENCY_SYMBOLS = {
@@ -62,6 +63,21 @@ def set(key: str, value: str):
 
 def all_values() -> dict:
     return {k: get(k) for k in _KEYS}
+
+
+POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS = 10
+
+
+def pokemon_center_fast_check_seconds() -> int:
+    """Clamped to a floor so this can never be set low enough to become
+    genuinely excessive polling, regardless of what ends up in .env or
+    the settings table."""
+    raw = get("pokemon_center_fast_check_seconds")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 15
+    return max(value, POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS)
 
 
 # --- Dashboard password (stored as salted hash, never plaintext, DB-only) ---

@@ -47,7 +47,7 @@ intent or quantity.
 - SMS alerts: uses **your own** Twilio account. Twilio charges you
   fractions of a cent per text plus about $1/month for a number. This
   project never centralizes or touches that billing.
-- Best Buy polling needs a free API key from developer.bestbuy.com.
+- Best Buy polling needs a free API key from [developer.bestbuy.com](https://developer.bestbuy.com/).
 - Card Alert itself: free, no license key, no paid tier.
 
 ## Notification setup
@@ -156,21 +156,30 @@ or `other`. This only affects which subreddits the signal scraper checks.
 Every retailer poller already works for any product regardless of game.
 
 ## Pokémon Center schedule
-Polls every 10 minutes Monday through Thursday, 8am to 1pm PST (when
-restocks and queues most often happen), and every 30 minutes the rest of
-the time. It's never fully stopped, so a queue that opens outside the
-usual window still gets caught, just checked less often, since the
-"queue is live" alert is meant to fire whenever it's true, any time. A
-queue-live alert has no cooldown and fires again on every poll for as
-long as the queue stays open, unlike restock alerts, which dedupe for 30
-minutes. Change the constants in `scheduler.py` if you need something
-different.
+The full stock/price check polls every 10 minutes Monday through
+Thursday, 8am to 1pm PST (when restocks and queues most often happen),
+and every 30 minutes the rest of the time. It's never fully stopped, so
+a queue that opens outside the usual window still gets caught, just
+checked less often.
+
+Separately, a much faster, much lighter check runs continuously (not
+restricted to that window) purely to catch the queue opening quickly —
+it only asks "is the queue live," using a HEAD request instead of a full
+page fetch, which is what makes checking this often reasonable. It's
+configurable on the Settings page (default 15 seconds, minimum 10, never
+lower). There's no true push/webhook API available from Pokémon Center
+for this, so fast, light polling is the closest available to "actively
+listening." To keep frequent checks from becoming a flood of alerts,
+"queue is live" alerts share a 90-second cooldown across both checks:
+the first alert fires promptly, repeats are limited to roughly once per
+cooldown window rather than once per check. Change the constants in
+`scheduler.py` if you need something different.
 
 ## Versioning
-Current version: **v0.0.6**. Changes are logged in [`RELEASE.md`](RELEASE.md)
+Current version: **v0.0.8**. Changes are logged in [`RELEASE.md`](RELEASE.md)
 as they land, under an "Unreleased" heading; cutting a release means
 moving that heading's entries under a new version number and tagging the
-commit (`git tag v0.0.7`, etc.) — the in-app updater checks tags, so a
+commit (`git tag v0.0.9`, etc.) — the in-app updater checks tags, so a
 release isn't "real" for update purposes until it's tagged, not just
 described in RELEASE.md.
 

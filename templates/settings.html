@@ -55,15 +55,13 @@
     <section class="panel">
       <h2>Discord <span class="cost-tag cost-tag--free">free</span></h2>
       <input type="password" name="discord_webhook_url" value="{{ values.discord_webhook_url }}" placeholder="https://discord.com/api/webhooks/..." class="wide-input" autocomplete="off">
-      <div class="mention-row">
-        <select name="discord_mention_type" class="mention-select">
-          <option value="" {{ 'selected' if values.discord_mention_type == '' else '' }}>No mention</option>
-          <option value="user" {{ 'selected' if values.discord_mention_type == 'user' else '' }}>Mention a user</option>
-          <option value="role" {{ 'selected' if values.discord_mention_type == 'role' else '' }}>Mention a role</option>
-        </select>
-        <input type="text" name="discord_mention_id" value="{{ values.discord_mention_id }}" placeholder="Discord user or role ID" class="mention-id-input">
-      </div>
-      <p class="hint">Right-click a user or role in Discord (with Developer Mode on, under Settings → Advanced) and choose "Copy ID." This must be the numeric ID Discord copies (e.g. 123456789012345678), not a username — a non-numeric value here is skipped rather than sent as broken text. Every alert will start with that mention.</p>
+      <label class="mention-field-label">Mention users
+        <input type="text" name="discord_mention_users" value="{{ values.discord_mention_users }}" placeholder="123456789012345678, 234567890123456789" class="wide-input mono">
+      </label>
+      <label class="mention-field-label">Mention roles
+        <input type="text" name="discord_mention_roles" value="{{ values.discord_mention_roles }}" placeholder="345678901234567890, 456789012345678901" class="wide-input mono">
+      </label>
+      <p class="hint">Right-click a user or role in Discord (with Developer Mode on, under Settings → Advanced) and choose "Copy ID," then paste it into whichever field above fits. Separate multiple IDs with commas to mention several people and/or roles at once. These must be the numeric IDs Discord copies (e.g. 123456789012345678), not usernames — any non-numeric entry is skipped rather than sent as broken text. Every alert starts with all of these mentions.</p>
       <div class="test-row">
         <button type="button" id="test-discord-btn">Send test alert</button>
         <span id="test-discord-output" class="test-output"></span>
@@ -92,12 +90,23 @@
     <section class="panel">
       <h2>Best Buy polling <span class="cost-tag cost-tag--free">free API key</span></h2>
       <input type="password" name="bestbuy_api_key" value="{{ values.bestbuy_api_key }}" placeholder="Best Buy API key" class="wide-input" autocomplete="off">
+      <p class="hint">Get a free key at <a href="https://developer.bestbuy.com/" target="_blank">developer.bestbuy.com</a> — sign up, create an app, and copy the API key it gives you.</p>
     </section>
 
     <section class="panel">
       <h2>Target polling <span class="cost-tag cost-tag--free">optional</span></h2>
-      <p class="hint">Card Alert uses a shared key by default that gets rate-limited from time to time, since everyone using it shares the same limit. Open Target's site in your browser, open dev tools' Network tab, load any product page, find a request to redsky.target.com, and copy its "key" parameter here to use your own instead.</p>
-      <input type="password" name="target_api_key" value="{{ values.target_api_key }}" placeholder="Leave blank to use the shared default key" class="wide-input" autocomplete="off">
+      <p class="hint">Card Alert uses a shared key by default that gets rate-limited from time to time, since everyone using it shares the same limit. Try finding your own automatically, or paste one in manually if that doesn't work: open Target's site in your browser, open dev tools' Network tab, load any product page, find a request to redsky.target.com, and copy its "key" parameter here.</p>
+      <input type="password" name="target_api_key" id="target-api-key-input" value="{{ values.target_api_key }}" placeholder="Leave blank to use the shared default key" class="wide-input" autocomplete="off">
+      <div class="test-row">
+        <button type="button" id="find-target-key-btn">Find automatically</button>
+        <span id="find-target-key-output" class="test-output"></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Pokémon Center queue speed</h2>
+      <p class="hint">Card Alert checks separately, and much more often, for the Pokémon Center queue specifically, so you're not stuck waiting up to 10 minutes for that alert. Each check is lightweight (it only asks "is the queue live," not the full page), which is what makes checking this often reasonable. Lower is faster; {{ pokemon_center_fast_check_floor }} seconds is the fastest allowed, so this can't be set low enough to become genuinely excessive. There's no true instant push notification available from Pokémon Center, this is the closest thing to it.</p>
+      <input type="number" name="pokemon_center_fast_check_seconds" value="{{ values.pokemon_center_fast_check_seconds }}" min="{{ pokemon_center_fast_check_floor }}" step="1" class="wide-input">
     </section>
 
     <section class="panel">
@@ -124,6 +133,24 @@
   settingsForm.addEventListener('input', () => { unsavedBar.classList.add('visible'); });
   settingsForm.addEventListener('change', () => { unsavedBar.classList.add('visible'); });
   document.getElementById('unsaved-save-btn').addEventListener('click', () => { settingsForm.submit(); });
+
+  document.getElementById('find-target-key-btn').addEventListener('click', async () => {
+    const out = document.getElementById('find-target-key-output');
+    out.textContent = 'Looking...';
+    try {
+      const res = await fetch('/settings/discover-target-key', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById('target-api-key-input').value = data.key;
+        unsavedBar.classList.add('visible');
+        out.textContent = '✅ Found one — click Save settings to use it.';
+      } else {
+        out.textContent = `❌ ${data.error}`;
+      }
+    } catch (e) {
+      out.textContent = '❌ Could not check right now — paste one in manually instead.';
+    }
+  });
 
   document.getElementById('test-discord-btn').addEventListener('click', async () => {
     const out = document.getElementById('test-discord-output');

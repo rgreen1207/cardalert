@@ -20,6 +20,7 @@ def settings_page(request: Request, saved: Optional[str] = None):
         saved=saved,
         currencies=list(config.CURRENCY_SYMBOLS.keys()),
         current_version=updater.current_ref(),
+        pokemon_center_fast_check_floor=config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS,
     )
     return templates.TemplateResponse("settings.html", ctx)
 
@@ -27,8 +28,8 @@ def settings_page(request: Request, saved: Optional[str] = None):
 @router.post("/settings/save")
 def settings_save(
     discord_webhook_url: str = Form(""),
-    discord_mention_type: str = Form(""),
-    discord_mention_id: str = Form(""),
+    discord_mention_users: str = Form(""),
+    discord_mention_roles: str = Form(""),
     ntfy_topic: str = Form(""),
     pushover_user_key: str = Form(""),
     pushover_app_token: str = Form(""),
@@ -38,13 +39,14 @@ def settings_save(
     twilio_to_number: str = Form(""),
     bestbuy_api_key: str = Form(""),
     target_api_key: str = Form(""),
+    pokemon_center_fast_check_seconds: str = Form("15"),
     currency: str = Form("USD"),
     dashboard_password: str = Form(""),
 ):
     for key, value in {
         "discord_webhook_url": discord_webhook_url,
-        "discord_mention_type": discord_mention_type,
-        "discord_mention_id": discord_mention_id,
+        "discord_mention_users": discord_mention_users,
+        "discord_mention_roles": discord_mention_roles,
         "ntfy_topic": ntfy_topic,
         "pushover_user_key": pushover_user_key,
         "pushover_app_token": pushover_app_token,
@@ -57,6 +59,11 @@ def settings_save(
         "currency": currency,
     }.items():
         config.set(key, value)
+    try:
+        clamped = max(int(pokemon_center_fast_check_seconds), config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS)
+    except (TypeError, ValueError):
+        clamped = config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
+    config.set("pokemon_center_fast_check_seconds", str(clamped))
     if dashboard_password:
         # blank field on the settings page means "leave unchanged." The
         # stored hash is never rendered back into the form to fill this in
@@ -67,20 +74,44 @@ def settings_save(
 @router.post("/settings/test-discord")
 def test_discord():
     result = notifier.send_discord("🔔 Test alert from Card Alert. If you see this, your Discord webhook works.")
-    # Report exactly what mention (if any) was actually applied, so the
-    # settings page can show it — this makes "did my mention setting even
+    # Report exactly what mentions (if any) were actually applied, so the
+    # settings page can show it — this makes "did my mention settings even
     # get read correctly" verifiable from the UI instead of a guess.
-    mention_type = config.get("discord_mention_type")
-    mention_id = config.get("discord_mention_id").strip()
-    mention_prefix = notifier.discord_mention_prefix()
-    if mention_prefix:
-        result["mention_applied"] = f"{mention_type} ID {mention_id}"
-    elif mention_type in ("user", "role") and mention_id:
+    raw_users = config.get("discord_mention_users")
+    raw_roles = config.get("discord_mention_roles")
+    valid_users = notifier._parse_mention_ids(raw_users)
+    valid_roles = notifier._parse_mention_ids(raw_roles)
+    total_entries = len([p for p in raw_users.split(",") if p.strip()]) + \
+        len([p for p in raw_roles.split(",") if p.strip()])
+    valid_count = len(valid_users) + len(valid_roles)
+
+    if valid_count:
+        parts = []
+        if valid_users:
+            parts.append(f"{len(valid_users)} user{'s' if len(valid_users) != 1 else ''}")
+        if valid_roles:
+            parts.append(f"{len(valid_roles)} role{'s' if len(valid_roles) != 1 else ''}")
+        result["mention_applied"] = " and ".join(parts)
+        if valid_count < total_entries:
+            result["mention_skipped_reason"] = (
+                f"{total_entries - valid_count} entry/entries weren't purely numeric "
+                "and were skipped rather than sent as broken text."
+            )
+    elif total_entries:
         result["mention_applied"] = None
-        result["mention_skipped_reason"] = "The saved ID isn't purely numeric, so it was skipped rather than sent as broken text."
+        result["mention_skipped_reason"] = "None of the saved IDs were purely numeric, so all were skipped rather than sent as broken text."
     else:
         result["mention_applied"] = None
     return JSONResponse(result)
+
+
+@router.post("/settings/discover-target-key")
+def discover_target_key():
+    import pollers
+    key = pollers.discover_target_api_key()
+    if key:
+        return JSONResponse({"ok": True, "key": key})
+    return JSONResponse({"ok": False, "error": "Couldn't find one automatically — paste one in manually instead."})
 
 
 @router.get("/settings/check-update")
