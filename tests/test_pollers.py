@@ -85,6 +85,39 @@ def test_target_rate_limited_returns_distinct_status(monkeypatch, fake_response)
     assert "Too many requests" in result["error_detail"]
 
 
+def test_target_403_with_perimeterx_marker_is_classified_as_antibot(monkeypatch, fake_response):
+    """Distinguishing a real finding from a guess: PerimeterX's own
+    scripts (visible on Target's actual page source — a 'humanSensor'
+    script from client.px-cloud.net, a '_pxhd' cookie) are the real
+    signal that a 403 is anti-bot detection, not an expired/invalid key.
+    Those two situations call for different responses, so they must be
+    told apart rather than both showing as the same generic status."""
+    block_page = "<html><body>Access to this page has been denied because we believe you are using automation tools. Powered by PerimeterX.</body></html>"
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(status_code=403, text=block_page))
+    result = pollers.check_target("1011209279")
+    assert result["raw_status"] == "BLOCKED_BY_ANTIBOT"
+    assert "perimeterx" in result["error_detail"].lower()
+
+
+def test_target_403_without_antibot_marker_stays_generic(monkeypatch, fake_response):
+    """A plain 403 with no anti-bot fingerprint in the body should NOT
+    be over-classified as anti-bot detection when there's no actual
+    evidence for that — stays as the generic, honest 'could be either'
+    status instead of a confident-sounding guess."""
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(status_code=403, text="Forbidden"))
+    result = pollers.check_target("1011209279")
+    assert result["raw_status"] == "BLOCKED_OR_KEY_INVALID"
+
+
+def test_target_429_with_captcha_marker_is_classified_as_antibot(monkeypatch, fake_response):
+    """Anti-bot detection can show up on a 429 too, not just 401/403 —
+    the marker check applies regardless of which status code carried it."""
+    block_page = "Please solve this px-captcha to continue."
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(status_code=429, text=block_page))
+    result = pollers.check_target("1011209279")
+    assert result["raw_status"] == "BLOCKED_BY_ANTIBOT"
+
+
 def test_target_non_json_response_returns_distinct_status(monkeypatch):
     """A 200 response whose body isn't valid JSON (e.g. an HTML
     block/interstitial page instead of the expected API response) must

@@ -69,6 +69,37 @@ def discover_target_api_key(candidate_tcins=None):
     return None
 
 
+# Substrings that show up in known bot-mitigation block/challenge pages
+# (PerimeterX/HUMAN Security being the one visibly present on Target's own
+# site, per its "humanSensor" script and _pxhd cookie — confirmed by
+# inspecting real page source, not assumed). Checked case-insensitively
+# against the response body. This list is inherently incomplete and will
+# go stale if a vendor changes their block page's wording — it's a
+# best-effort signal for the console/API detail, not a guarantee.
+_ANTIBOT_MARKERS = [
+    "perimeterx", "px-captcha", "_px", "human security",
+    "access to this page has been denied", "please verify you are a human",
+    "px-block", "captcha-delivery",
+]
+
+
+def _classify_block_response(r):
+    """Returns (raw_status, error_detail) for a 401/403/429 response,
+    distinguishing an anti-bot block page from a generic rejection where
+    possible — these call for genuinely different responses (an anti-bot
+    block isn't something a new key fixes), so guessing from the status
+    code alone isn't good enough. Always keeps the actual response body
+    (truncated) in error_detail so this can be verified by hand too."""
+    body_lower = r.text.lower()
+    matched = [m for m in _ANTIBOT_MARKERS if m in body_lower]
+    detail = f"HTTP {r.status_code} from Target: {r.text[:500]}"
+    if matched:
+        return "BLOCKED_BY_ANTIBOT", f"Matched anti-bot marker(s) {matched}. {detail}"
+    if r.status_code == 429:
+        return "RATE_LIMITED", detail
+    return "BLOCKED_OR_KEY_INVALID", detail
+
+
 def check_target(tcin: str):
     """Target's public redsky aggregation endpoint. `tcin` is the numeric id
     in the product URL, e.g. target.com/p/-/A-1011209279 -> tcin=1011209279.
@@ -92,15 +123,15 @@ def check_target(tcin: str):
     # response was fine but didn't have the shape we expected" — these
     # are genuinely different situations and were previously both
     # collapsed into the same generic "Error checking stock." A 403/429
-    # here usually means the hardcoded redsky API key below has been
-    # rotated or rate-limited by Target and needs updating, not that any
-    # particular product is broken.
-    if r.status_code in (401, 403):
-        return {"in_stock": False, "price": None, "raw_status": "BLOCKED_OR_KEY_INVALID",
-                "error_detail": f"HTTP {r.status_code} from Target: {r.text[:300]}"}
-    if r.status_code == 429:
-        return {"in_stock": False, "price": None, "raw_status": "RATE_LIMITED",
-                "error_detail": f"HTTP 429 from Target: {r.text[:300]}"}
+    # here could mean the shared redsky API key has been rate-limited,
+    # OR it could mean an anti-bot layer (e.g. PerimeterX) is rejecting
+    # the request outright regardless of the key — those call for very
+    # different responses, so _classify_block_response looks at the
+    # actual response body for known anti-bot markers to tell them apart
+    # rather than guessing from the status code alone.
+    if r.status_code in (401, 403, 429):
+        raw_status, detail = _classify_block_response(r)
+        return {"in_stock": False, "price": None, "raw_status": raw_status, "error_detail": detail}
     r.raise_for_status()
     try:
         data = r.json()
@@ -108,7 +139,7 @@ def check_target(tcin: str):
         # Target returned a 2xx with a body that isn't valid JSON — e.g. an
         # HTML block/interstitial page instead of the expected API response.
         return {"in_stock": False, "price": None, "raw_status": "UNEXPECTED_RESPONSE",
-                "error_detail": f"Non-JSON response body: {r.text[:300]}"}
+                "error_detail": f"Non-JSON response body: {r.text[:500]}"}
     # .get() rather than direct indexing: Target's API can legitimately
     # return a response missing "product" (delisted items, some
     # restricted/age-gated items, occasional API quirks) — that's a real,

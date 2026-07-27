@@ -7,8 +7,19 @@ match git tags of the same name (`v0.0.3`, etc.) — the in-app updater
 release means both: add an entry here, then tag the commit.
 
 ## [Unreleased]
-Nothing yet. Add entries here as changes land, then move them under a new
-version heading when you tag a release.
+### Added
+- Target's poller now distinguishes an anti-bot block from a generic
+  key/rate-limit rejection, based on real evidence (checked the response
+  body for known bot-mitigation markers, e.g. PerimeterX, which is
+  visibly present on Target's own page via its "humanSensor" script and
+  `_pxhd` cookie), instead of guessing from the status code alone. Shows
+  as "Blocked by anti-bot protection," distinct from "Blocked by
+  retailer." Also confirmed, by inspecting real Target page source,
+  that the key embedded in the page is a static default served to every
+  visitor (`defaultServicesApiKey`), not a private one — so "Find
+  automatically" can only ever find the same shared key everyone already
+  has, and that's now documented honestly rather than implied to be a
+  real fix for anti-bot blocking.
 
 ## [0.0.9]
 Continuation of v0.0.8's Pokémon Center and Target work, plus a fix for
