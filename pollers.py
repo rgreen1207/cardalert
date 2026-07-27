@@ -32,6 +32,38 @@ TARGET_HEADERS = {
 TIMEOUT = 12
 
 
+def discover_target_api_key():
+    """Best-effort attempt to find a currently-working redsky API key
+    automatically, by fetching a Target page and looking for one embedded
+    in it. This isn't circumventing anything — the key is something
+    Target's own frontend already sends to every visitor's browser, the
+    same way the original hardcoded default was found in the first
+    place. Tries a couple of regex patterns since the exact embedding
+    can change with Target's frontend, and always fails gracefully
+    (returns None) so the Settings page can fall back to manual entry
+    rather than erroring out. Not guaranteed to work forever — if Target
+    changes how/whether they embed it, this quietly stops finding one and
+    manual entry is still there."""
+    try:
+        r = requests.get("https://www.target.com/p/-/A-1011209279",
+                          headers=TARGET_HEADERS, timeout=TIMEOUT)
+        r.raise_for_status()
+    except requests.RequestException:
+        return None
+
+    text = r.text
+    patterns = [
+        r"redsky\.target\.com[^\"'\s]*?key=([0-9a-f]{32})",
+        r'"apiKey"\s*:\s*"([0-9a-f]{32})"',
+        r'"redskyApiKey"\s*:\s*"([0-9a-f]{32})"',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return None
+
+
 def check_target(tcin: str):
     """Target's public redsky aggregation endpoint. `tcin` is the numeric id
     in the product URL, e.g. target.com/p/-/A-1011209279 -> tcin=1011209279.
@@ -143,6 +175,28 @@ def check_bn(product_url: str):
     price_match = re.search(r'"price"\s*:\s*"?([\d.]+)"?', text)
     price = float(price_match.group(1)) if price_match else None
     return {"in_stock": not sold_out, "price": price, "raw_status": "SOLD_OUT" if sold_out else "AVAILABLE"}
+
+
+def check_pokemon_center_queue_only(product_url: str):
+    """Lightweight queue-only check using HEAD instead of GET — the queue
+    redirect is visible in the response URL/headers alone, so there's no
+    need to download the full page body just to check for it. This is
+    what makes polling much more frequently for 'is the queue live right
+    now' reasonable: each check costs a fraction of what a full page
+    fetch does. Pair with check_pokemon_center at a slower interval for
+    actual stock/price data, which does need the full page.
+
+    Falls back to a GET if the server doesn't support HEAD on this URL
+    (some do return 405), since detecting the queue at all matters more
+    than the bandwidth savings in that case."""
+    try:
+        r = requests.head(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
+        if r.status_code == 405:
+            r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
+    except requests.RequestException:
+        r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
+    queue_live = "queue-it" in r.url or "queue.pokemoncenter.com" in r.url
+    return {"queue_live": queue_live}
 
 
 def check_pokemon_center(product_url: str):

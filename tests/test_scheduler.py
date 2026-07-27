@@ -118,10 +118,12 @@ def test_queue_live_dispatches_alert_and_records_it(monkeypatch):
     assert "queue just went LIVE" in alerts[0]["message"]
 
 
-def test_queue_live_fires_again_on_every_poll_while_still_live(monkeypatch):
-    """'Always' means no suppression window for this alert type, unlike
-    restock alerts which dedupe for 30 minutes — a queue that's still
-    open on the next poll should alert again, not go silent."""
+def test_queue_live_respects_cooldown_but_fires_again_after_it_expires(monkeypatch):
+    """Design update: 'always alert while the queue is live' now means
+    'alert promptly, then don't spam' — a shared cooldown (much shorter
+    than the old 30-min restock dedup, since queue-live is meant to feel
+    immediate) governs repeat alerts, so a fast check interval doesn't
+    turn into a flood of alerts for a queue that stays open a while."""
     import db
     import pollers
     import notifier
@@ -136,11 +138,19 @@ def test_queue_live_fires_again_on_every_poll_while_still_live(monkeypatch):
     monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
 
     scheduler.poll_one(retailer_row)
-    scheduler.poll_one(retailer_row)
-    scheduler.poll_one(retailer_row)
+    scheduler.poll_one(retailer_row)  # within the cooldown — should not re-alert
+    scheduler.poll_one(retailer_row)  # still within it
 
-    assert len(dispatched) == 3
-    assert len(db.recent_alerts()) == 3
+    assert len(dispatched) == 1
+    assert len(db.recent_alerts()) == 1
+
+    # Simulate the cooldown having expired by backdating the last alert
+    with db.get_conn() as conn:
+        conn.execute("UPDATE alerts_sent SET ts = ts - ?", (scheduler.QUEUE_LIVE_ALERT_COOLDOWN + 1,))
+
+    scheduler.poll_one(retailer_row)
+    assert len(dispatched) == 2
+    assert len(db.recent_alerts()) == 2
 
 
 def test_poll_one_logs_generic_exception_to_console_and_stores_error_detail(monkeypatch, capsys):
@@ -193,3 +203,98 @@ def test_poll_one_logs_poller_provided_error_detail_to_console(monkeypatch, caps
     status = db.latest_status(retailer_row["id"])
     assert status["error_detail"] == "HTTP 403 from Target: Forbidden by WAF rule 12345"
     assert status["raw_status"] == "BLOCKED_OR_KEY_INVALID"
+
+
+def test_should_check_queue_fast_now_only_applies_to_pokemon_center():
+    assert scheduler.should_check_queue_fast_now({"id": 5000, "retailer": "target"}) is False
+
+
+def test_should_check_queue_fast_now_respects_configured_interval(monkeypatch):
+    import config
+    config.set("pokemon_center_fast_check_seconds", "20")
+    item = {"id": 5001, "retailer": "pokemon_center"}
+    scheduler._last_queue_checked[5001] = time.time() - 21
+    assert scheduler.should_check_queue_fast_now(item) is True
+    scheduler._last_queue_checked[5001] = time.time() - 5
+    assert scheduler.should_check_queue_fast_now(item) is False
+
+
+def test_check_queue_fast_detects_live_queue_and_alerts(monkeypatch):
+    """The actual feature request: a lightweight, frequent check that
+    catches the queue opening without waiting for the slower full check."""
+    import db
+    import pollers
+    import notifier
+
+    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", lambda url: {"queue_live": True})
+    dispatched = []
+    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+
+    scheduler.check_queue_fast(retailer_row)
+
+    assert len(dispatched) == 1
+    assert "queue just went LIVE" in dispatched[0][1]
+    status = db.latest_status(retailer_row["id"])
+    assert status["raw_status"] == "QUEUE_LIVE"
+
+
+def test_check_queue_fast_does_nothing_when_queue_not_live(monkeypatch):
+    import db
+    import pollers
+    import notifier
+
+    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", lambda url: {"queue_live": False})
+    dispatched = []
+    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+
+    scheduler.check_queue_fast(retailer_row)
+    assert dispatched == []
+
+
+def test_check_queue_fast_handles_exceptions_gracefully(monkeypatch, capsys):
+    import db
+    import pollers
+
+    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    def raise_error(url):
+        raise ConnectionError("timed out")
+
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", raise_error)
+    scheduler.check_queue_fast(retailer_row)  # must not raise
+    captured = capsys.readouterr()
+    assert "timed out" in captured.out
+
+
+def test_fast_check_and_full_check_share_the_same_alert_cooldown(monkeypatch):
+    """The full check's own QUEUE_LIVE branch and the fast path both use
+    _alert_queue_live_if_due, so an alert from one blocks a near-immediate
+    duplicate from the other — they shouldn't double up."""
+    import db
+    import pollers
+    import notifier
+
+    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    dispatched = []
+    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", lambda url: {"queue_live": True})
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
+
+    scheduler.check_queue_fast(retailer_row)  # fires the first alert
+    scheduler.poll_one(retailer_row)  # immediately after — should be suppressed by the shared cooldown
+
+    assert len(dispatched) == 1

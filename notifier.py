@@ -48,21 +48,29 @@ def send_discord(message: str) -> dict:
         return {"ok": False, "status": None, "detail": f"{type(e).__name__}: could not reach Discord."}
 
 
+def _parse_mention_ids(raw: str) -> list:
+    """Splits a comma-separated field into individual numeric Discord IDs,
+    silently dropping anything non-numeric (e.g. stray whitespace, a
+    trailing comma, or a username typed by mistake instead of the actual
+    ID) rather than building a broken mention tag for it."""
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip().isdigit()]
+
+
 def discord_mention_prefix() -> str:
-    """Builds the "<@id>" or "<@&id>" prefix from the Settings page's
-    mention fields, or an empty string if mentions are off. Discord IDs
-    are always purely numeric (a "snowflake") — if something non-numeric
-    ended up in that field (e.g. a username typed by mistake instead of
-    the numeric ID from "Copy ID"), the resulting tag could never resolve
-    to a real mention no matter what the message payload allows, so it's
-    skipped entirely rather than sending broken-looking text."""
-    mention_type = config.get("discord_mention_type")
-    mention_id = config.get("discord_mention_id").strip()
-    if not mention_id or mention_type not in ("user", "role") or not mention_id.isdigit():
+    """Builds a "<@id> <@id2> <@&roleId>" prefix from the Settings page's
+    comma-separated user/role ID fields, or an empty string if none are
+    set. Discord IDs are always purely numeric (a "snowflake") — any
+    non-numeric entry (e.g. a username typed by mistake instead of the
+    numeric ID from "Copy ID") is dropped rather than sent as a broken
+    tag that could never resolve to a real mention anyway."""
+    user_ids = _parse_mention_ids(config.get("discord_mention_users"))
+    role_ids = _parse_mention_ids(config.get("discord_mention_roles"))
+    tags = [f"<@{uid}>" for uid in user_ids] + [f"<@&{rid}>" for rid in role_ids]
+    if not tags:
         return ""
-    if mention_type == "role":
-        return f"<@&{mention_id}> "
-    return f"<@{mention_id}> "
+    return " ".join(tags) + " "
 
 
 def send_ntfy(message: str, title: str = "Card Alert"):

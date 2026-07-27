@@ -87,3 +87,24 @@ def test_all_values_includes_every_known_key():
     values = config.all_values()
     for key in config._KEYS:
         assert key in values
+
+
+def test_pokemon_center_fast_check_seconds_default():
+    assert config.pokemon_center_fast_check_seconds() == 15
+
+
+def test_pokemon_center_fast_check_seconds_respects_setting():
+    config.set("pokemon_center_fast_check_seconds", "30")
+    assert config.pokemon_center_fast_check_seconds() == 30
+
+
+def test_pokemon_center_fast_check_seconds_enforces_floor():
+    """The actual safety requirement: this can never be set low enough
+    to become genuinely excessive polling."""
+    config.set("pokemon_center_fast_check_seconds", "1")
+    assert config.pokemon_center_fast_check_seconds() == config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
+
+
+def test_pokemon_center_fast_check_seconds_handles_garbage_gracefully():
+    config.set("pokemon_center_fast_check_seconds", "not-a-number")
+    assert config.pokemon_center_fast_check_seconds() >= config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS

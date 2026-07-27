@@ -165,6 +165,72 @@ def test_target_falls_back_to_shared_key_when_none_configured(monkeypatch, fake_
     assert "key=9f36aeafbe60771e321a7cc95a78140772ab3e96" in captured_url["url"]
 
 
+def test_discover_target_api_key_finds_key_via_redsky_url_pattern(monkeypatch, fake_response):
+    html = 'some page content <script>fetch("https://redsky.target.com/foo?key=abcdef0123456789abcdef0123456789&tcin=1")</script>'
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(text=html))
+    key = pollers.discover_target_api_key()
+    assert key == "abcdef0123456789abcdef0123456789"
+
+
+def test_discover_target_api_key_finds_key_via_apikey_json_field(monkeypatch, fake_response):
+    html = '<script>window.__CONFIG__ = {"apiKey":"11112222333344445555666677778888"};</script>'
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(text=html))
+    key = pollers.discover_target_api_key()
+    assert key == "11112222333344445555666677778888"
+
+
+def test_discover_target_api_key_returns_none_when_not_found(monkeypatch, fake_response):
+    monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(text="<html>nothing here</html>"))
+    assert pollers.discover_target_api_key() is None
+
+
+def test_discover_target_api_key_returns_none_on_network_error(monkeypatch):
+    import requests
+
+    def raise_error(*a, **k):
+        raise requests.RequestException("connection failed")
+
+    monkeypatch.setattr(pollers.requests, "get", raise_error)
+    assert pollers.discover_target_api_key() is None
+
+
+def test_check_pokemon_center_queue_only_detects_queue(monkeypatch, fake_response):
+    monkeypatch.setattr(pollers.requests, "head",
+                         lambda *a, **k: fake_response(url="https://cardalert.queue-it.net/somequeue"))
+    result = pollers.check_pokemon_center_queue_only("https://www.pokemoncenter.com/product/x")
+    assert result["queue_live"] is True
+
+
+def test_check_pokemon_center_queue_only_no_queue(monkeypatch, fake_response):
+    monkeypatch.setattr(pollers.requests, "head",
+                         lambda *a, **k: fake_response(url="https://www.pokemoncenter.com/product/x"))
+    result = pollers.check_pokemon_center_queue_only("https://www.pokemoncenter.com/product/x")
+    assert result["queue_live"] is False
+
+
+def test_check_pokemon_center_queue_only_falls_back_to_get_on_405(monkeypatch, fake_response):
+    """Some servers reject HEAD on a given URL — must still detect the
+    queue via a GET fallback rather than giving up."""
+    monkeypatch.setattr(pollers.requests, "head", lambda *a, **k: fake_response(status_code=405))
+    monkeypatch.setattr(pollers.requests, "get",
+                         lambda *a, **k: fake_response(url="https://cardalert.queue-it.net/somequeue"))
+    result = pollers.check_pokemon_center_queue_only("https://www.pokemoncenter.com/product/x")
+    assert result["queue_live"] is True
+
+
+def test_check_pokemon_center_queue_only_falls_back_to_get_on_network_error(monkeypatch, fake_response):
+    import requests
+
+    def raise_error(*a, **k):
+        raise requests.RequestException("connection reset")
+
+    monkeypatch.setattr(pollers.requests, "head", raise_error)
+    monkeypatch.setattr(pollers.requests, "get",
+                         lambda *a, **k: fake_response(url="https://www.pokemoncenter.com/product/x"))
+    result = pollers.check_pokemon_center_queue_only("https://www.pokemoncenter.com/product/x")
+    assert result["queue_live"] is False
+
+
 def test_target_sends_browser_like_headers(monkeypatch, fake_response):
     """Regression guard: the request previously sent only a bare
     User-Agent, missing the Origin/Referer/Accept headers a real page

@@ -20,6 +20,7 @@ import db
 import pollers
 import notifier
 import signals
+import config
 
 PST = ZoneInfo("America/Los_Angeles")
 
@@ -30,20 +31,40 @@ POLL_INTERVALS = {
     "bn": 300,
     "amazon": 150,
     "lgs_shopify": 180,
-    "pokemon_center": 600,   # used inside the primary window; see POKEMON_CENTER_OFF_WINDOW_INTERVAL for outside it
+    "pokemon_center": 600,   # the FULL stock/price check — see the fast queue-only check below for queue detection specifically
 }
 
-# Pokémon Center: poll every 10 minutes Mon-Thu 8am-1pm PST (when restocks
-# and queues most often happen), and less frequently the rest of the time
-# so a queue opening outside that window still gets caught rather than
-# never checked at all — "always alert when the queue is live" needs
-# polling to never fully stop, just slow down.
+# Pokémon Center: full stock/price checks every 10 minutes Mon-Thu
+# 8am-1pm PST (when restocks and queues most often happen), and less
+# frequently the rest of the time so a queue opening outside that window
+# still gets caught rather than never checked at all.
 POKEMON_CENTER_ALLOWED_DAYS = {0, 1, 2, 3}  # Monday=0 ... Thursday=3
 POKEMON_CENTER_START_HOUR = 8
 POKEMON_CENTER_END_HOUR = 13
 POKEMON_CENTER_OFF_WINDOW_INTERVAL = 1800  # 30 min outside the primary window
 
+# Separately, a much faster, much lighter check runs continuously (not
+# restricted to the window) purely to catch the queue opening quickly —
+# see pollers.check_pokemon_center_queue_only, which uses a HEAD request
+# instead of a full page fetch specifically so this can run often without
+# costing much bandwidth per check. There's no true push/webhook API for
+# this available from Pokémon Center, so frequent-but-light polling is
+# the closest available to "actively listening." The interval is
+# configurable on the Settings page (config.pokemon_center_fast_check_seconds),
+# clamped to a floor so it can never be set low enough to become genuinely
+# excessive.
+#
+# A shared cooldown (not the raw check interval) governs how often an
+# alert can actually fire for "queue is live" — otherwise a 10-15 second
+# check interval would mean an alert every 10-15 seconds for as long as
+# the queue stays open, which stops being useful and starts being spam.
+# The first alert still fires within one fast-check interval of the queue
+# actually opening; subsequent "still live" alerts are limited to roughly
+# once per cooldown window instead of once per check.
+QUEUE_LIVE_ALERT_COOLDOWN = 90
+
 _last_polled = {}  # product_retailer_id -> unix ts
+_last_queue_checked = {}  # product_retailer_id -> unix ts
 _stop_flag = threading.Event()
 
 
@@ -66,9 +87,45 @@ def should_poll_now(retailer_row: dict) -> bool:
     return (time.time() - last) >= interval
 
 
+def should_check_queue_fast_now(retailer_row: dict) -> bool:
+    if retailer_row["retailer"] != "pokemon_center":
+        return False
+    interval = config.pokemon_center_fast_check_seconds()
+    last = _last_queue_checked.get(retailer_row["id"], 0)
+    return (time.time() - last) >= interval
+
+
 def _channels_for(retailer_row: dict):
     raw = retailer_row.get("notify_channel", "") or ""
     return [c.strip() for c in raw.split(",") if c.strip()]
+
+
+def _alert_queue_live_if_due(retailer_row: dict):
+    """Shared by both the fast queue-only path and the full check's own
+    QUEUE_LIVE branch, so the cooldown applies consistently regardless of
+    which one detects it first."""
+    last_alert = db.last_alert_time_for_retailer(retailer_row["id"])
+    if last_alert is not None and (time.time() - last_alert) < QUEUE_LIVE_ALERT_COOLDOWN:
+        return
+    msg = notifier.queue_open_message(retailer_row, retailer_row.get("product_url") or "")
+    for channel in _channels_for(retailer_row):
+        notifier.dispatch(msg, channel)
+    db.record_alert(retailer_row["product_id"], msg, product_retailer_id=retailer_row["id"])
+
+
+def check_queue_fast(retailer_row: dict):
+    """The lightweight, frequent path — only ever checks for the queue,
+    never touches stock/price, so it stays cheap enough to run often."""
+    _last_queue_checked[retailer_row["id"]] = time.time()
+    try:
+        result = pollers.check_pokemon_center_queue_only(retailer_row.get("product_url") or "")
+    except Exception as e:
+        print(f"[scheduler] fast queue check failed for retailer_id={retailer_row['id']}:", repr(e))
+        return
+    if result.get("queue_live"):
+        db.log_status(retailer_row["id"], in_stock=False, price=None, over_msrp_pct=None,
+                      ignored_over_price=False, raw_status="QUEUE_LIVE")
+        _alert_queue_live_if_due(retailer_row)
 
 
 def poll_one(retailer_row: dict):
@@ -129,16 +186,19 @@ def poll_one(retailer_row: dict):
             db.record_alert(retailer_row["product_id"], msg, product_retailer_id=retailer_row["id"])
 
     if result.get("raw_status") == "QUEUE_LIVE":
-        msg = notifier.queue_open_message(retailer_row, retailer_row.get("product_url") or "")
-        for channel in _channels_for(retailer_row):
-            notifier.dispatch(msg, channel)
-        db.record_alert(retailer_row["product_id"], msg, product_retailer_id=retailer_row["id"])
+        _alert_queue_live_if_due(retailer_row)
 
 
 def poll_loop_iteration():
     for retailer_row in db.list_retailers_for_polling(active_only=True):
         if should_poll_now(retailer_row):
             poll_one(retailer_row)
+
+
+def queue_fast_check_loop_iteration():
+    for retailer_row in db.list_retailers_for_polling(active_only=True):
+        if should_check_queue_fast_now(retailer_row):
+            check_queue_fast(retailer_row)
 
 
 _last_signal_check = 0
@@ -181,11 +241,15 @@ def run_forever():
     while not _stop_flag.is_set():
         try:
             poll_loop_iteration()
+            queue_fast_check_loop_iteration()
             signal_loop_iteration()
             _purge_loop_iteration()
         except Exception as e:
             print("[scheduler] loop error:", e)
-        time.sleep(15)
+        # 5s, not 15s — the fast queue-check floor is 10s, so the tick
+        # rate needs to be fine-grained enough to actually honor that
+        # without waiting up to an extra 15s past the configured interval.
+        time.sleep(5)
 
 
 def start_background_thread():

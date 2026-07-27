@@ -206,38 +206,54 @@ def test_discord_mention_prefix_empty_by_default():
     assert notifier.discord_mention_prefix() == ""
 
 
-def test_discord_mention_prefix_user():
-    config.set("discord_mention_type", "user")
-    config.set("discord_mention_id", "123456789")
-    assert notifier.discord_mention_prefix() == "<@123456789> "
+def test_discord_mention_prefix_single_user():
+    config.set("discord_mention_users", "123456789012345678")
+    assert notifier.discord_mention_prefix() == "<@123456789012345678> "
 
 
-def test_discord_mention_prefix_role():
-    config.set("discord_mention_type", "role")
-    config.set("discord_mention_id", "987654321")
-    assert notifier.discord_mention_prefix() == "<@&987654321> "
+def test_discord_mention_prefix_single_role():
+    config.set("discord_mention_roles", "987654321098765432")
+    assert notifier.discord_mention_prefix() == "<@&987654321098765432> "
+
+
+def test_discord_mention_prefix_multiple_users_comma_separated():
+    """The actual feature request: multiple mentions, comma-separated."""
+    config.set("discord_mention_users", "111111111111111111, 222222222222222222")
+    assert notifier.discord_mention_prefix() == "<@111111111111111111> <@222222222222222222> "
+
+
+def test_discord_mention_prefix_multiple_users_and_roles_together():
+    config.set("discord_mention_users", "111111111111111111,222222222222222222")
+    config.set("discord_mention_roles", "333333333333333333")
+    prefix = notifier.discord_mention_prefix()
+    assert "<@111111111111111111>" in prefix
+    assert "<@222222222222222222>" in prefix
+    assert "<@&333333333333333333>" in prefix
+
+
+def test_discord_mention_prefix_drops_non_numeric_entries_from_a_list():
+    """One bad entry in a comma-separated list shouldn't break the
+    others — each entry is validated independently."""
+    config.set("discord_mention_users", "111111111111111111,not_a_real_id,222222222222222222")
+    prefix = notifier.discord_mention_prefix()
+    assert "<@111111111111111111>" in prefix
+    assert "<@222222222222222222>" in prefix
+    assert "not_a_real_id" not in prefix
 
 
 def test_discord_mention_prefix_ignored_without_id():
-    config.set("discord_mention_type", "user")
-    config.set("discord_mention_id", "")
+    config.set("discord_mention_users", "")
+    config.set("discord_mention_roles", "")
     assert notifier.discord_mention_prefix() == ""
 
 
 def test_discord_mention_prefix_rejects_non_numeric_id():
-    """Regression guard for a reported bug: mentions came out as literal
-    unresolved text instead of actually pinging. One real cause: a
-    non-numeric value (e.g. a username typed by mistake) in the ID field
-    can never resolve to a real mention, so it must be skipped rather
-    than sent as broken-looking text."""
-    config.set("discord_mention_type", "user")
-    config.set("discord_mention_id", "some_username")
+    config.set("discord_mention_users", "some_username")
     assert notifier.discord_mention_prefix() == ""
 
 
 def test_discord_mention_prefix_accepts_numeric_id():
-    config.set("discord_mention_type", "user")
-    config.set("discord_mention_id", "123456789012345678")
+    config.set("discord_mention_users", "123456789012345678")
     assert notifier.discord_mention_prefix() == "<@123456789012345678> "
 
 
@@ -246,8 +262,7 @@ def test_send_discord_includes_allowed_mentions_field(monkeypatch, fake_response
     without an explicit allowed_mentions field, Discord can render
     <@id>/<@&id> as literal unlinked text instead of an actual ping."""
     config.set("discord_webhook_url", "https://discord.com/api/webhooks/fake")
-    config.set("discord_mention_type", "role")
-    config.set("discord_mention_id", "555555555555555555")
+    config.set("discord_mention_roles", "555555555555555555")
     captured = {}
 
     def fake_post(url, json=None, timeout=None):
@@ -258,19 +273,3 @@ def test_send_discord_includes_allowed_mentions_field(monkeypatch, fake_response
     notifier.send_discord("Restock alert!")
     assert captured["payload"]["allowed_mentions"] == {"parse": ["users", "roles"]}
     assert captured["payload"]["content"].startswith("<@&555555555555555555> ")
-
-
-def test_send_discord_includes_mention(monkeypatch, fake_response):
-    config.set("discord_webhook_url", "https://discord.com/api/webhooks/fake")
-    config.set("discord_mention_type", "role")
-    config.set("discord_mention_id", "555")
-    captured = {}
-
-    def fake_post(url, json=None, timeout=None):
-        captured["content"] = json["content"]
-        return fake_response(status_code=204)
-
-    monkeypatch.setattr(notifier.requests, "post", fake_post)
-    notifier.send_discord("Restock alert!")
-    assert captured["content"].startswith("<@&555> ")
-    assert "Restock alert!" in captured["content"]

@@ -6,8 +6,42 @@ match git tags of the same name (`v0.0.3`, etc.) — the in-app updater
 (Settings → "Check for updates") compares against tags, so cutting a
 release means both: add an entry here, then tag the commit.
 
-## [0.0.7]
+## [Unreleased]
+Nothing yet. Add entries here as changes land, then move them under a new
+version heading when you tag a release.
+
+## [0.0.8]
+Note: v0.0.7 was intentionally skipped, never used for a release.
+
+Two feature areas: faster Pokémon Center queue detection, and three
+Settings-page improvements (multiple Discord mentions, a Best Buy signup
+link, and automatic Target API key discovery).
+
 ### Added
+- A much faster, much lighter check specifically for the Pokémon Center
+  queue, separate from the existing full stock/price check. It only asks
+  "is the queue live" using a HEAD request instead of a full page fetch,
+  which is what makes checking every 15 seconds (configurable, minimum
+  10) reasonable instead of excessive — there's no true push/webhook API
+  available from Pokémon Center, so fast+light polling is the closest
+  available to "actively listening." Queue-live alerts now share a
+  90-second cooldown across both checks (previously no cooldown at all,
+  which was fine at a 10-minute interval but would have meant an alert
+  every 10-15 seconds at the new one) — the first alert still fires
+  promptly, repeats are limited to roughly once per cooldown window.
+- Discord mentions now support multiple users and roles, comma
+  separated, instead of just one of either — two separate fields
+  ("Mention users" / "Mention roles"), each accepting a comma-separated
+  list of numeric Discord IDs. Any non-numeric entry in a list is
+  skipped independently without affecting the others.
+- A direct link to developer.bestbuy.com on the Best Buy settings panel.
+- A "Find automatically" button for the Target API key — tries to find
+  a currently-working one by reading it out of a real Target page (the
+  key is something Target's own frontend already sends to every
+  visitor, not something hidden), and falls back to manual entry with a
+  clear message if it can't find one. Not guaranteed to keep working
+  forever if Target changes how they embed it, hence the fallback always
+  being there.
 - A clear reminder on Settings that changes only take effect after
   clicking "Save settings," plus a sticky "you have unsaved changes" bar
   that appears the moment anything is edited and stays reachable without

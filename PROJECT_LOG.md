@@ -120,6 +120,96 @@ sightings extrapolated forward. None of this requires anything off-limits —
 `poll_forecasts` + `db.restock_pattern` are our own versions of #1 and #4,
 built entirely from public/own data.
 
+## Versioning: v0.0.8 released, v0.0.7 intentionally skipped (2026-07-27)
+Ryan asked to release v0.0.8 directly — the fast Pokémon Center check and
+the three settings-page changes (both previously sitting under
+"Unreleased," logged separately below) were bundled together as v0.0.8
+in `RELEASE.md`, with v0.0.7 explicitly noted as skipped/never used
+rather than left as an unexplained gap. **If a future session sees v0.0.7
+referenced or expected somewhere and it doesn't exist, this is why —
+it's intentional, not a missing entry to hunt down.** README.md's
+"Current version" line updated to match.
+
+## Fast Pokémon Center queue check (2026-07-27)
+Ryan asked whether the 10-minute polling interval was too slow for
+catching a queue opening, and whether there was a way to check more
+often without hitting rate limits. Answered honestly: there's no true
+push/webhook API from Pokémon Center, so "actively listening" isn't
+available in the way he might have hoped — the real lever is polling
+more often, but *lighter* per check, not just faster.
+
+Built:
+- `pollers.check_pokemon_center_queue_only` — uses `requests.head()`
+  instead of `.get()`. The queue redirect is visible in the response
+  URL alone; there's no need to download the full page body just to
+  detect it. Falls back to a GET if a server doesn't support HEAD (405)
+  or the HEAD request itself fails. This is what makes checking every
+  15 seconds (vs. the old 10-minute full check) reasonable — each check
+  costs a fraction of what a full page fetch does, not just "the same
+  cost, more often."
+- `config.pokemon_center_fast_check_seconds()` — configurable on
+  Settings, clamped to a floor (`POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
+  = 10`) enforced both client-side (HTML `min` attribute) and
+  server-side (`routers/settings.py` clamps regardless of what's
+  submitted) — **never remove the server-side clamp even if the client
+  one seems sufficient**, it's the one that actually matters.
+- **Important design reconciliation, not obvious at first**: the
+  existing "queue is live" alert had zero cooldown by design (intentional,
+  from an earlier session) because at a 10-minute polling interval, "no
+  cooldown" naturally meant "an alert roughly every 10 minutes while
+  it's open," which is fine. At a 15-second check interval, "no
+  cooldown" would mean an alert every 15 seconds, spam, not a feature.
+  Added `QUEUE_LIVE_ALERT_COOLDOWN = 90` (seconds) and a shared
+  `_alert_queue_live_if_due()` helper used by **both** the fast path and
+  the full check's own QUEUE_LIVE branch, so the cooldown applies
+  consistently regardless of which one detects it first, and the two
+  paths can't double-fire on the same detection. **If either check path
+  is modified later, route any new queue-live alert logic through this
+  same shared helper, don't reintroduce a separate ad-hoc alert call.**
+- Outer scheduler loop tick reduced from 15s to 5s (`run_forever`), since
+  the fast-check floor of 10s needs tick granularity finer than the old
+  15s loop to actually be honored close to on-time.
+- One existing test (`test_queue_live_fires_again_on_every_poll_while_still_live`)
+  encoded the *old* no-cooldown assumption and had to be rewritten, not
+  just renamed — it now explicitly verifies the cooldown suppresses
+  rapid repeats but still fires again once the cooldown expires (proven
+  by directly backdating the alert timestamp in the test, not just
+  waiting for real time to pass).
+- 15 new tests total (212 passing, up from 197): the poller's HEAD/GET
+  fallback behavior, the scheduler's fast-check scheduling and cooldown
+  sharing between both paths, and the config floor enforcement.
+
+## Three settings-page changes (2026-07-27)
+Ryan asked for three things on Settings, all built and tested, though
+the PROJECT_LOG entry for this was missed at the time (hit the session's
+tool-use limit mid-update) — logging it now, after the fact, for
+continuity:
+1. **Multiple Discord mentions, comma-separated.** Replaced the single
+   `discord_mention_type`/`discord_mention_id` pair with two fields,
+   `discord_mention_users` and `discord_mention_roles`, each a
+   comma-separated list. `notifier._parse_mention_ids()` splits and
+   validates each entry independently (drops non-numeric ones without
+   affecting the rest). **No formal migration was written for the old
+   field names** — they were simply replaced, since the feature was only
+   one turn old and not yet meaningfully deployed anywhere; any old
+   saved values under the removed keys are just orphaned, harmless DB
+   rows now.
+2. **Best Buy signup link** — a direct link to developer.bestbuy.com
+   added next to that field on Settings, and in the README.
+3. **Automatic Target API key discovery** — `pollers.discover_target_api_key()`
+   fetches a real Target page and regex-searches for an embedded key
+   (tries a few patterns, since the exact embedding could change).
+   Always fails gracefully (`None`) on any error, never raises. Wired to
+   a "Find automatically" button on Settings via
+   `/settings/discover-target-key`, which fills the field and marks it
+   as an unsaved change on success, or shows a clear fallback message on
+   failure — manual entry (from the prior session's work) is always
+   still there regardless. **This is inherently best-effort** — verified
+   the regex/parsing logic works correctly against synthetic HTML, but
+   could not verify against Target's actual current page structure
+   (network to target.com is blocked from this sandbox), so if it stops
+   finding a key, that's expected eventually, not necessarily a bug.
+
 ## Pokémon Center queue-live alert: verified, and a real gap closed (2026-07-27)
 Ryan asked for "always alert when the Pokémon Center queue is live."
 Investigation found the alert-dispatch code already existed

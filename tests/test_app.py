@@ -304,14 +304,30 @@ def test_discord_test_endpoint_reports_mention_applied(client, monkeypatch):
     client.post("/settings/save", data={
         "currency": "USD",
         "discord_webhook_url": "https://discord.com/api/webhooks/fake",
-        "discord_mention_type": "role",
-        "discord_mention_id": "999888777666555444",
+        "discord_mention_roles": "999888777666555444",
     })
     import notifier
     monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
     response = client.post("/settings/test-discord")
     data = response.json()
-    assert data["mention_applied"] == "role ID 999888777666555444"
+    assert data["mention_applied"] == "1 role"
+
+
+def test_discord_test_endpoint_reports_multiple_mentions_applied(client, monkeypatch):
+    """The actual feature request: multiple users and roles, comma
+    separated, all applied and all reported back."""
+    client.post("/setup/skip")
+    client.post("/settings/save", data={
+        "currency": "USD",
+        "discord_webhook_url": "https://discord.com/api/webhooks/fake",
+        "discord_mention_users": "111111111111111111,222222222222222222",
+        "discord_mention_roles": "333333333333333333",
+    })
+    import notifier
+    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+    response = client.post("/settings/test-discord")
+    data = response.json()
+    assert data["mention_applied"] == "2 users and 1 role"
 
 
 def test_discord_test_endpoint_reports_skipped_non_numeric_mention(client, monkeypatch):
@@ -319,14 +335,30 @@ def test_discord_test_endpoint_reports_skipped_non_numeric_mention(client, monke
     client.post("/settings/save", data={
         "currency": "USD",
         "discord_webhook_url": "https://discord.com/api/webhooks/fake",
-        "discord_mention_type": "user",
-        "discord_mention_id": "not_a_real_id",
+        "discord_mention_users": "not_a_real_id",
     })
     import notifier
     monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
     response = client.post("/settings/test-discord")
     data = response.json()
     assert data["mention_applied"] is None
+    assert "skipped" in data["mention_skipped_reason"].lower()
+
+
+def test_discord_test_endpoint_reports_partial_skip(client, monkeypatch):
+    """One bad entry among several good ones should still apply the
+    good ones and report the skip separately, not fail everything."""
+    client.post("/setup/skip")
+    client.post("/settings/save", data={
+        "currency": "USD",
+        "discord_webhook_url": "https://discord.com/api/webhooks/fake",
+        "discord_mention_users": "111111111111111111,not_a_real_id",
+    })
+    import notifier
+    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+    response = client.post("/settings/test-discord")
+    data = response.json()
+    assert data["mention_applied"] == "1 user"
     assert "skipped" in data["mention_skipped_reason"].lower()
 
 
@@ -488,11 +520,13 @@ def test_retailer_and_game_names_are_capitalized_on_products_page(client):
 def test_discord_mention_fields_save_and_load(client):
     client.post("/setup/skip")
     client.post("/settings/save", data={
-        "currency": "USD", "discord_mention_type": "role", "discord_mention_id": "999888777",
+        "currency": "USD",
+        "discord_mention_users": "111111111111111111,222222222222222222",
+        "discord_mention_roles": "999888777666555444",
     })
     import config
-    assert config.get("discord_mention_type") == "role"
-    assert config.get("discord_mention_id") == "999888777"
+    assert config.get("discord_mention_users") == "111111111111111111,222222222222222222"
+    assert config.get("discord_mention_roles") == "999888777666555444"
 
 
 def test_products_page_never_500s_when_fx_fetch_returns_malformed_data(client, monkeypatch):
@@ -578,3 +612,35 @@ def test_error_detail_reaches_api_but_not_rendered_html(client):
     assert "WAF rule 98765" not in dashboard_html
     assert "WAF rule 98765" not in products_html
     assert "Blocked by retailer" in dashboard_html  # the masked label is what shows instead
+
+
+def test_discover_target_key_endpoint_success(client, monkeypatch):
+    client.post("/setup/skip")
+    import pollers
+    monkeypatch.setattr(pollers, "discover_target_api_key", lambda: "abcdef0123456789abcdef0123456789")
+    response = client.post("/settings/discover-target-key")
+    data = response.json()
+    assert data["ok"] is True
+    assert data["key"] == "abcdef0123456789abcdef0123456789"
+
+
+def test_discover_target_key_endpoint_failure_falls_back_to_manual(client, monkeypatch):
+    client.post("/setup/skip")
+    import pollers
+    monkeypatch.setattr(pollers, "discover_target_api_key", lambda: None)
+    response = client.post("/settings/discover-target-key")
+    data = response.json()
+    assert data["ok"] is False
+    assert "paste one in manually" in data["error"].lower()
+
+
+def test_settings_page_links_to_bestbuy_developer_signup(client):
+    client.post("/setup/skip")
+    html = client.get("/settings").text
+    assert 'href="https://developer.bestbuy.com/"' in html
+
+
+def test_settings_page_has_find_target_key_button(client):
+    client.post("/setup/skip")
+    html = client.get("/settings").text
+    assert 'id="find-target-key-btn"' in html
