@@ -120,6 +120,75 @@ sightings extrapolated forward. None of this requires anything off-limits —
 `poll_forecasts` + `db.restock_pattern` are our own versions of #1 and #4,
 built entirely from public/own data.
 
+## Everything from the discussion, v0.0.9 (2026-07-27)
+Ryan asked to build out everything from the prior discussion turn, plus
+one new setting: an opt-in "alert multiple times while the queue is
+live, every N seconds" checkbox (default off — one alert per opening).
+
+- **Target key discovery, real products first**: `discover_target_api_key`
+  now takes `candidate_tcins`, tries each as a real product URL before
+  falling back to the fixed example page. The endpoint in
+  `routers/settings.py` gathers these from the user's own saved Target
+  retailers via `db.list_retailers_for_polling(active_only=False)`.
+- **Transition-based queue alerts, replacing the cooldown design**:
+  `scheduler._queue_was_live` (in-memory, per retailer_id) tracks the
+  previous check's live/not-live state. `_handle_queue_status()` — shared
+  by both the fast and full check paths — fires exactly one alert on a
+  False→True transition, stays silent while it remains True, and only
+  fires again after a True→False→True cycle. The opt-in repeat setting
+  (`config.pokemon_center_repeat_alerts_enabled()` /
+  `pokemon_center_repeat_alert_seconds()`, floor 30s) layers repeated
+  alerts on top of that same transition logic rather than replacing it.
+  **The old `QUEUE_LIVE_ALERT_COOLDOWN` constant and
+  `_alert_queue_live_if_due()` function are gone — if you're looking for
+  them from an earlier PROJECT_LOG entry, they were superseded by this
+  design, not renamed.**
+- **Real bug caught during live verification, not by inspection**: while
+  testing the above end-to-end, `check_queue_fast` threw
+  `MissingSchema('Invalid URL \'\'')` — it only read `retailer_row["product_url"]`,
+  but Pokémon Center's convention (used correctly everywhere else in the
+  app, e.g. `notifier.resolve_product_url`) is that `identifier` itself
+  IS the URL when `product_url` is blank, which is the normal way this
+  retailer type gets added. Fixed by routing through
+  `notifier.resolve_product_url()` instead of reading the field
+  directly. **This is exactly the kind of bug that inspection alone
+  wouldn't have caught — the code looked locally reasonable in
+  isolation; only running it against a realistically-shaped saved
+  product surfaced it.** Worth remembering for future scheduler changes:
+  always test against a product added the way the UI actually produces
+  one, not just a synthetic dict with every field manually filled in.
+- **Test-isolation bug found and fixed along the way**: `scheduler.py`'s
+  in-memory dicts (`_queue_was_live`, `_last_polled`,
+  `_last_queue_checked`) aren't reset between tests the way the database
+  is (fresh file per test via the `temp_db` fixture) — since each test's
+  DB restarts `AUTOINCREMENT` from 1, a retailer_id from one test could
+  collide with an unrelated retailer_id in a later test and leak stale
+  state. Added `reset_scheduler_in_memory_state` (autouse fixture in
+  `tests/conftest.py`) clearing all three dicts before every test. **If a
+  new in-memory tracker gets added to scheduler.py later, add it to this
+  fixture too, or tests involving it may pass/fail depending on run
+  order in a way that's hard to reproduce.**
+- **Dashboard's full-page-reload replaced with a quiet partial
+  refresh**: `setTimeout(() => location.reload(), 30000)` was doing a
+  full navigation every 30s (the reported "tab keeps refreshing" issue).
+  Replaced with a `fetch()` of the same page, parsed via `DOMParser`, with
+  only specific fragments (`#watch-status-tbody`, `#alerts-feed`,
+  `#signals-feed`, `#board-meta`) swapped in via `innerHTML`. Switched the
+  Pattern button's click handling to event delegation (listening on
+  `document`, checking `e.target.closest('.pattern-btn')`) since directly
+  attached listeners would otherwise be silently destroyed every time the
+  table body's `innerHTML` gets replaced.
+- **The Pokémon Center window status was already in the dashboard's
+  header** (`board-header`/`board-meta`) from earlier work — Ryan's
+  request to move it there was already satisfied; verified this by
+  checking the actual current file rather than assuming from memory or
+  from what a prior response claimed, since an earlier response in this
+  session had incorrectly said it was *not* there yet.
+- 226 tests passing (up from 219 before this turn's test additions).
+  Bandit and shellcheck clean.
+- Versioned as v0.0.9, continuing directly from v0.0.8 (no gap this
+  time).
+
 ## Versioning: v0.0.8 released, v0.0.7 intentionally skipped (2026-07-27)
 Ryan asked to release v0.0.8 directly — the fast Pokémon Center check and
 the three settings-page changes (both previously sitting under

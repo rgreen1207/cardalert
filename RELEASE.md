@@ -10,8 +10,54 @@ release means both: add an entry here, then tag the commit.
 Nothing yet. Add entries here as changes land, then move them under a new
 version heading when you tag a release.
 
-## [0.0.8]
-Note: v0.0.7 was intentionally skipped, never used for a release.
+## [0.0.9]
+Continuation of v0.0.8's Pokémon Center and Target work, plus a fix for
+a jarring UI issue.
+
+### Changed
+- **"Queue is live" alerts are now one per opening by default**, not
+  periodic reminders. Fires the moment the queue transitions from closed
+  to live, then stays quiet for as long as it remains live — only alerts
+  again if it closes and reopens later. An opt-in setting, "Alert me
+  multiple times while the queue is live, every ___ seconds," switches
+  to repeated reminders instead (minimum 30 seconds between them),
+  spaced by whatever interval you set, for people who'd rather get
+  several chances to notice a queue that opened early in the morning.
+  Replaces the previous 90-second-cooldown design, which was closer to
+  "periodic reminders" than "one alert."
+- Target's automatic key discovery now tries your own saved Target
+  products first (real, currently-live pages you already care about),
+  falling back to the one fixed example page only if you have none
+  saved or none of them happen to have the key embedded.
+- Consolidated and clarified the Pokémon Center explanation on
+  Settings — the fast check and full check are now described together
+  in one place, in plain terms, instead of split across a hint paragraph
+  and a separate FAQ entry.
+
+### Fixed
+- **The Dashboard's auto-refresh was a full page reload every 30
+  seconds** — the visible "tab keeps refreshing" issue. Replaced with a
+  quiet background fetch that swaps only the fragments showing live data
+  (status table, alerts, chatter, the Pokémon Center window indicator),
+  with no visible flash, no lost scroll position, and no interrupted
+  in-progress "Pattern" lookup. The Pattern button's click handling
+  switched to event delegation so it keeps working after every refresh
+  without needing to be re-wired each time.
+- The fast Pokémon Center queue check was resolving the wrong URL —
+  found and fixed during live verification of this release, not by
+  inspection alone. It only read the `product_url` field, but Pokémon
+  Center's documented convention is that the `identifier` field itself
+  IS the URL when `product_url` is left blank (the normal case for this
+  retailer type) — every other part of the app already accounted for
+  this via `notifier.resolve_product_url`, the fast check didn't, and
+  would try to fetch an empty string for any Pokémon Center item added
+  the normal way.
+- A test-isolation bug: a few of the scheduler's timing trackers live in
+  plain in-memory dictionaries (by design, since they don't need to
+  survive a restart) that weren't being reset between tests, unlike the
+  database. Since each test's fresh database restarts its retailer IDs
+  from 1, stale state from one test's retailer could silently leak into
+  an unrelated later test that happened to get the same ID.
 
 Two feature areas: faster Pokémon Center queue detection, and three
 Settings-page improvements (multiple Discord mentions, a Best Buy signup
@@ -62,6 +108,14 @@ link, and automatic Target API key discovery).
   anything else specifically meant to defeat Target's anti-bot
   detection — that's a different category of thing than this project
   does at any tier.
+
+## [0.0.8]
+Note: v0.0.7 was intentionally skipped, never used for a release.
+
+Two feature areas: faster Pokémon Center queue detection, and three
+Settings-page improvements (multiple Discord mentions, a Best Buy signup
+link, and automatic Target API key discovery — later improved further
+in v0.0.9 above).
 
 ## [0.0.6]
 A redesign pass plus one diagnostics improvement: the app finally has a

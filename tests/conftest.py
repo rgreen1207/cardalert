@@ -36,6 +36,23 @@ def no_background_polling(monkeypatch):
     monkeypatch.setattr(scheduler, "start_background_thread", lambda: None)
 
 
+@pytest.fixture(autouse=True)
+def reset_scheduler_in_memory_state():
+    """scheduler.py tracks a few things in plain module-level dicts
+    (_queue_was_live, _last_polled, _last_queue_checked) rather than the
+    database, since they don't need to survive a restart. Unlike the DB,
+    which gets a fresh file per test via temp_db above, these dicts
+    persist across tests by default — and since each test's fresh DB
+    restarts its own AUTOINCREMENT ids from 1, a retailer_id of 1 in one
+    test can collide with a completely unrelated retailer_id of 1 in a
+    later test, leaking state between them. Clearing these before every
+    test closes that gap."""
+    scheduler._queue_was_live.clear()
+    scheduler._last_polled.clear()
+    scheduler._last_queue_checked.clear()
+    yield
+
+
 @pytest.fixture
 def client():
     from fastapi.testclient import TestClient

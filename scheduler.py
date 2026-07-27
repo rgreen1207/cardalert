@@ -54,15 +54,14 @@ POKEMON_CENTER_OFF_WINDOW_INTERVAL = 1800  # 30 min outside the primary window
 # clamped to a floor so it can never be set low enough to become genuinely
 # excessive.
 #
-# A shared cooldown (not the raw check interval) governs how often an
-# alert can actually fire for "queue is live" — otherwise a 10-15 second
-# check interval would mean an alert every 10-15 seconds for as long as
-# the queue stays open, which stops being useful and starts being spam.
-# The first alert still fires within one fast-check interval of the queue
-# actually opening; subsequent "still live" alerts are limited to roughly
-# once per cooldown window instead of once per check.
-QUEUE_LIVE_ALERT_COOLDOWN = 90
-
+# Whether a "queue is live" alert fires once per opening (the default) or
+# repeats while it stays open depends on config.pokemon_center_repeat_alerts_enabled().
+# Either way, this only needs to know "was it live last time I checked,"
+# tracked here rather than in the database — a state flip is a cheap,
+# in-memory thing, and this doesn't need to survive a restart (a restart
+# mid-queue would just mean one possible extra "first" alert, an
+# acceptable tradeoff for not needing a DB round-trip on every check).
+_queue_was_live = {}  # product_retailer_id -> bool
 _last_polled = {}  # product_retailer_id -> unix ts
 _last_queue_checked = {}  # product_retailer_id -> unix ts
 _stop_flag = threading.Event()
@@ -100,32 +99,60 @@ def _channels_for(retailer_row: dict):
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
-def _alert_queue_live_if_due(retailer_row: dict):
-    """Shared by both the fast queue-only path and the full check's own
-    QUEUE_LIVE branch, so the cooldown applies consistently regardless of
-    which one detects it first."""
-    last_alert = db.last_alert_time_for_retailer(retailer_row["id"])
-    if last_alert is not None and (time.time() - last_alert) < QUEUE_LIVE_ALERT_COOLDOWN:
-        return
+def _send_queue_alert(retailer_row: dict):
     msg = notifier.queue_open_message(retailer_row, retailer_row.get("product_url") or "")
     for channel in _channels_for(retailer_row):
         notifier.dispatch(msg, channel)
     db.record_alert(retailer_row["product_id"], msg, product_retailer_id=retailer_row["id"])
 
 
+def _handle_queue_status(retailer_row: dict, queue_live: bool):
+    """Shared by both the fast queue-only path and the full check's own
+    queue detection, so state tracking and alert behavior stay consistent
+    regardless of which one is running at any given moment.
+
+    Default behavior: exactly one alert per opening — the moment
+    queue_live flips from False to True. No further alerts while it
+    stays live, only a new one if it closes (queue_live goes back to
+    False) and then opens again later. If the user has turned on repeat
+    alerts, additional alerts fire roughly every
+    config.pokemon_center_repeat_alert_seconds() for as long as it
+    remains live, instead of just the one."""
+    retailer_id = retailer_row["id"]
+    was_live = _queue_was_live.get(retailer_id, False)
+    _queue_was_live[retailer_id] = queue_live
+
+    if not queue_live:
+        return  # nothing to alert on; state is now recorded as "not live"
+
+    if not was_live:
+        _send_queue_alert(retailer_row)  # fresh opening — always alert immediately
+        return
+
+    if config.pokemon_center_repeat_alerts_enabled():
+        last_alert = db.last_alert_time_for_retailer(retailer_id)
+        interval = config.pokemon_center_repeat_alert_seconds()
+        if last_alert is None or (time.time() - last_alert) >= interval:
+            _send_queue_alert(retailer_row)
+
+
 def check_queue_fast(retailer_row: dict):
     """The lightweight, frequent path — only ever checks for the queue,
     never touches stock/price, so it stays cheap enough to run often."""
     _last_queue_checked[retailer_row["id"]] = time.time()
+    url = notifier.resolve_product_url(retailer_row)
+    if not url:
+        return
     try:
-        result = pollers.check_pokemon_center_queue_only(retailer_row.get("product_url") or "")
+        result = pollers.check_pokemon_center_queue_only(url)
     except Exception as e:
         print(f"[scheduler] fast queue check failed for retailer_id={retailer_row['id']}:", repr(e))
         return
-    if result.get("queue_live"):
+    queue_live = bool(result.get("queue_live"))
+    if queue_live:
         db.log_status(retailer_row["id"], in_stock=False, price=None, over_msrp_pct=None,
                       ignored_over_price=False, raw_status="QUEUE_LIVE")
-        _alert_queue_live_if_due(retailer_row)
+    _handle_queue_status(retailer_row, queue_live)
 
 
 def poll_one(retailer_row: dict):
@@ -185,8 +212,8 @@ def poll_one(retailer_row: dict):
                 notifier.dispatch(msg, channel)
             db.record_alert(retailer_row["product_id"], msg, product_retailer_id=retailer_row["id"])
 
-    if result.get("raw_status") == "QUEUE_LIVE":
-        _alert_queue_live_if_due(retailer_row)
+    if retailer_row["retailer"] == "pokemon_center":
+        _handle_queue_status(retailer_row, result.get("raw_status") == "QUEUE_LIVE")
 
 
 def poll_loop_iteration():

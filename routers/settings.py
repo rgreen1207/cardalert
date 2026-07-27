@@ -4,6 +4,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 
 import config
+import db
 import notifier
 import updater
 from templating import templates
@@ -21,6 +22,7 @@ def settings_page(request: Request, saved: Optional[str] = None):
         currencies=list(config.CURRENCY_SYMBOLS.keys()),
         current_version=updater.current_ref(),
         pokemon_center_fast_check_floor=config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS,
+        pokemon_center_repeat_alert_floor=config.POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS,
     )
     return templates.TemplateResponse("settings.html", ctx)
 
@@ -40,6 +42,8 @@ def settings_save(
     bestbuy_api_key: str = Form(""),
     target_api_key: str = Form(""),
     pokemon_center_fast_check_seconds: str = Form("15"),
+    pokemon_center_repeat_alerts: str = Form(""),
+    pokemon_center_repeat_alert_seconds: str = Form("90"),
     currency: str = Form("USD"),
     dashboard_password: str = Form(""),
 ):
@@ -64,6 +68,14 @@ def settings_save(
     except (TypeError, ValueError):
         clamped = config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
     config.set("pokemon_center_fast_check_seconds", str(clamped))
+
+    config.set("pokemon_center_repeat_alerts", "1" if pokemon_center_repeat_alerts else "")
+    try:
+        repeat_clamped = max(int(pokemon_center_repeat_alert_seconds), config.POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS)
+    except (TypeError, ValueError):
+        repeat_clamped = config.POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS
+    config.set("pokemon_center_repeat_alert_seconds", str(repeat_clamped))
+
     if dashboard_password:
         # blank field on the settings page means "leave unchanged." The
         # stored hash is never rendered back into the form to fill this in
@@ -108,7 +120,11 @@ def test_discord():
 @router.post("/settings/discover-target-key")
 def discover_target_key():
     import pollers
-    key = pollers.discover_target_api_key()
+    candidate_tcins = [
+        r["identifier"] for r in db.list_retailers_for_polling(active_only=False)
+        if r["retailer"] == "target"
+    ]
+    key = pollers.discover_target_api_key(candidate_tcins=candidate_tcins)
     if key:
         return JSONResponse({"ok": True, "key": key})
     return JSONResponse({"ok": False, "error": "Couldn't find one automatically — paste one in manually instead."})

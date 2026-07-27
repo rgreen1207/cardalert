@@ -118,12 +118,11 @@ def test_queue_live_dispatches_alert_and_records_it(monkeypatch):
     assert "queue just went LIVE" in alerts[0]["message"]
 
 
-def test_queue_live_respects_cooldown_but_fires_again_after_it_expires(monkeypatch):
-    """Design update: 'always alert while the queue is live' now means
-    'alert promptly, then don't spam' — a shared cooldown (much shorter
-    than the old 30-min restock dedup, since queue-live is meant to feel
-    immediate) governs repeat alerts, so a fast check interval doesn't
-    turn into a flood of alerts for a queue that stays open a while."""
+def test_queue_live_alerts_once_per_opening_by_default(monkeypatch):
+    """Design update: the default is exactly one alert per opening, not
+    periodic reminders — repeats are opt-in (see the repeat-alert tests
+    below), matching the explicit request that a queue going live should
+    mean one alert unless the user has turned on multiple."""
     import db
     import pollers
     import notifier
@@ -138,19 +137,82 @@ def test_queue_live_respects_cooldown_but_fires_again_after_it_expires(monkeypat
     monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
 
     scheduler.poll_one(retailer_row)
-    scheduler.poll_one(retailer_row)  # within the cooldown — should not re-alert
-    scheduler.poll_one(retailer_row)  # still within it
+    scheduler.poll_one(retailer_row)  # still live — should NOT re-alert by default
+    scheduler.poll_one(retailer_row)  # still live — same
 
     assert len(dispatched) == 1
     assert len(db.recent_alerts()) == 1
 
-    # Simulate the cooldown having expired by backdating the last alert
+
+def test_queue_live_alerts_again_after_closing_and_reopening(monkeypatch):
+    """A genuinely new opening (closed, then live again) is a new
+    event — it should get its own alert, not be suppressed by the first
+    one having already fired."""
+    import db
+    import pollers
+    import notifier
+
+    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    dispatched = []
+    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
+    scheduler.poll_one(retailer_row)
+    assert len(dispatched) == 1
+
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "SOLD_OUT"})
+    scheduler.poll_one(retailer_row)  # queue closes
+    assert len(dispatched) == 1  # closing doesn't alert
+
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
+    scheduler.poll_one(retailer_row)  # opens again — a new event
+    assert len(dispatched) == 2
+
+
+def test_queue_live_repeat_alerts_when_enabled(monkeypatch):
+    """The actual feature request: an opt-in setting to receive multiple
+    alerts while the queue stays live, spaced by a configurable
+    interval, instead of just the one."""
+    import db
+    import pollers
+    import notifier
+    import config
+
+    config.set("pokemon_center_repeat_alerts", "1")
+    config.set("pokemon_center_repeat_alert_seconds", "60")
+
+    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    dispatched = []
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
+    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+
+    scheduler.poll_one(retailer_row)
+    assert len(dispatched) == 1
+
+    scheduler.poll_one(retailer_row)  # still within the 60s repeat interval — no repeat yet
+    assert len(dispatched) == 1
+
+    # Simulate the repeat interval having elapsed
     with db.get_conn() as conn:
-        conn.execute("UPDATE alerts_sent SET ts = ts - ?", (scheduler.QUEUE_LIVE_ALERT_COOLDOWN + 1,))
+        conn.execute("UPDATE alerts_sent SET ts = ts - 61")
 
     scheduler.poll_one(retailer_row)
     assert len(dispatched) == 2
-    assert len(db.recent_alerts()) == 2
+
+
+def test_queue_live_repeat_alerts_disabled_by_default(monkeypatch):
+    import config
+    assert config.pokemon_center_repeat_alerts_enabled() is False
 
 
 def test_poll_one_logs_generic_exception_to_console_and_stores_error_detail(monkeypatch, capsys):
@@ -217,6 +279,29 @@ def test_should_check_queue_fast_now_respects_configured_interval(monkeypatch):
     assert scheduler.should_check_queue_fast_now(item) is True
     scheduler._last_queue_checked[5001] = time.time() - 5
     assert scheduler.should_check_queue_fast_now(item) is False
+
+
+def test_check_queue_fast_resolves_url_from_identifier_when_product_url_blank(monkeypatch):
+    """Real bug caught during live testing: the fast check only read
+    product_url, but Pokémon Center's documented convention is that the
+    identifier field itself IS the URL when product_url is left blank —
+    the full check and alert-building already handled this correctly via
+    notifier.resolve_product_url; the fast check didn't, and would try to
+    fetch an empty string whenever product_url wasn't separately filled
+    in (the normal case for this retailer type)."""
+    import db
+    import pollers
+
+    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    db.add_retailer(pid, "pokemon_center", "https://www.pokemoncenter.com/product/x", "")  # blank product_url
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    captured_urls = []
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only",
+                         lambda url: (captured_urls.append(url), {"queue_live": False})[1])
+
+    scheduler.check_queue_fast(retailer_row)
+    assert captured_urls == ["https://www.pokemoncenter.com/product/x"]
 
 
 def test_check_queue_fast_detects_live_queue_and_alerts(monkeypatch):
