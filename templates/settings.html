@@ -30,7 +30,7 @@
 
   <section class="panel">
     <h2>Software updates</h2>
-    <p class="hint">Currently running: <span class="mono" id="current-version">{{ current_version }}</span></p>
+    <p class="hint">Currently running: <span class="mono" id="current-version">{{ current_version }}</span> · <a href="https://github.com/rgreen1207/cardalert/blob/main/RELEASE.md" target="_blank">release notes</a></p>
     <div class="test-row">
       <button type="button" id="check-update-btn">Check for updates</button>
       <button type="button" id="apply-update-btn" style="display:none;">Update now</button>
@@ -124,11 +124,18 @@
     applyBtn.style.display = 'none';
     try {
       const res = await fetch('/settings/check-update');
+      if (!res.ok) {
+        updateOut.textContent = `❌ Update check failed (HTTP ${res.status}). This usually means the app needs updating to a version that has this feature — try re-running the install command from a terminal.`;
+        return;
+      }
       const data = await res.json();
       if (data.error) {
         updateOut.textContent = `❌ ${data.error}`;
       } else if (data.update_available) {
-        updateOut.textContent = `Update available: ${data.current} → ${data.latest}`;
+        updateOut.textContent = '';
+        updateOut.appendChild(document.createTextNode(`current: ${data.current}`));
+        updateOut.appendChild(document.createElement('br'));
+        updateOut.appendChild(document.createTextNode(`new: ${data.latest}`));
         applyBtn.style.display = 'inline-block';
       } else {
         updateOut.textContent = '✅ Already up to date.';
@@ -143,9 +150,14 @@
     updateOut.textContent = 'Updating... this restarts the app, give it about 10 seconds.';
     try {
       const res = await fetch('/settings/apply-update', { method: 'POST' });
+      if (!res.ok) {
+        updateOut.textContent = `❌ Update failed (HTTP ${res.status}).`;
+        applyBtn.disabled = false;
+        return;
+      }
       const data = await res.json();
       if (!data.ok) {
-        updateOut.textContent = `❌ ${data.error}`;
+        updateOut.textContent = `❌ ${data.error || 'Update failed for an unknown reason.'}`;
         applyBtn.disabled = false;
         return;
       }

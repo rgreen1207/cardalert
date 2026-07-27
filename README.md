@@ -160,6 +160,14 @@ Hardcoded to Monday through Thursday, 8am to 1pm PST, every 10 minutes,
 skipped entirely outside that window. Change it in `scheduler.py` if you
 need something different.
 
+## Versioning
+Current version: **v0.0.3**. Changes are logged in [`RELEASE.md`](RELEASE.md)
+as they land, under an "Unreleased" heading; cutting a release means
+moving that heading's entries under a new version number and tagging the
+commit (`git tag v0.0.4`, etc.) — the in-app updater checks tags, so a
+release isn't "real" for update purposes until it's tagged, not just
+described in RELEASE.md.
+
 ## Testing & CI
 ```bash
 pip install -r requirements-dev.txt

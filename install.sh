@@ -91,7 +91,14 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now "${SERVICE_NAME}"
+sudo systemctl enable "${SERVICE_NAME}"
+# Explicit restart, not "enable --now": --now is equivalent to `systemctl
+# start`, which is a no-op if the service is already running. On a fresh
+# install there's nothing running yet, so restart just starts it; on an
+# update, restart is the only thing that actually loads the code we just
+# pulled. Using --now here previously meant re-running this script to
+# "update" only ever updated files on disk, never the running process.
+sudo systemctl restart "${SERVICE_NAME}"
 
 echo "Setting up passwordless restart permission for the in-app updater ..."
 # Scoped to exactly one command, restarting this one service, as this one

@@ -120,6 +120,46 @@ sightings extrapolated forward. None of this requires anything off-limits —
 `poll_forecasts` + `db.restock_pattern` are our own versions of #1 and #4,
 built entirely from public/own data.
 
+## Root cause found for a whole session's worth of "still not working" reports (2026-07-27)
+Ryan reported, over many turns, a series of things that were each verified
+working correctly in current code (empty currency dropdown, 404s on
+`/settings/check-update` and `/settings/test-discord`, missing version
+text on Settings) yet kept "still happening" on his live Pi even after he
+ran the installer to update. Root cause, finally found: **`install.sh`
+used `sudo systemctl enable --now cardalert` for both fresh installs and
+updates.** `--now` is equivalent to `systemctl start`, which does nothing
+if the service is already active — so re-running the installer correctly
+git-pulled new code to disk (hence the terminal showing a version bump)
+but never actually restarted the already-running process, which kept
+executing old code in memory indefinitely. Every "verified working in
+current code, not on his Pi" finding this session was almost certainly
+this one bug, not six separate deployment mishaps. Fixed by calling
+`systemctl enable` and `systemctl restart` as two explicit separate
+commands. **If a future session gets a report that something "still
+isn't fixed" after Ryan says he updated, check whether this exact class
+of bug has recurred (a script/tool that updates files but doesn't
+actually cause the running process to pick them up) before assuming the
+code itself has a bug** — that assumption burned a lot of turns this
+session before the actual cause was found.
+
+## Versioning convention established (2026-07-27)
+Ryan asked for a RELEASE.md changelog, current version pinned at v0.0.3
+(retroactively reconstructed 0.0.1 → 0.0.3 from this log's history — those
+two older versions were never actually tagged, so treat their content as
+approximate/reconstructed, not verbatim). **Convention going forward, must
+be followed by any future session touching this codebase:**
+- Every change gets an entry under `RELEASE.md`'s "Unreleased" heading as
+  it's made, not batched up later from memory.
+- Cutting a release = move "Unreleased" entries under a new version
+  heading (v0.0.4, v0.0.5, ...) AND actually tag the commit
+  (`git tag v0.0.4`) — the two have to happen together. RELEASE.md
+  describing a version that was never tagged doesn't make it real for the
+  in-app updater (`updater.py`), which compares against actual git tags,
+  not this file's content.
+- README.md's "Versioning" section and the version-tag link on the
+  Settings page (in `templates/settings.html`) both assume RELEASE.md
+  stays current — update all three together, not just one.
+
 ## In-app updater (2026-07-27)
 Ryan wanted an actual "click to update" control on the Settings page,
 not just "re-run the install command from a terminal." Built:

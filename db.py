@@ -80,13 +80,32 @@ CREATE TABLE IF NOT EXISTS drop_signals (
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    # timeout=10 makes SQLite wait up to 10s for a lock instead of raising
+    # immediately — the scheduler's background thread writes to this DB
+    # continuously (every poll logs a status row) while web requests read
+    # and write concurrently, so some contention is normal, not a bug.
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
         conn.commit()
     finally:
         conn.close()
+        _lock_down_wal_sidecar_files()
+
+
+def _lock_down_wal_sidecar_files():
+    # WAL mode creates -wal/-shm files alongside the main DB file. SQLite
+    # creates them with the process's default umask, not matching the 600
+    # we set on the main file — closing that gap here since they briefly
+    # hold the same credential data during write activity.
+    for suffix in ("-wal", "-shm"):
+        path = DB_PATH + suffix
+        if os.path.exists(path):
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
 
 
 CURRENT_SCHEMA_VERSION = 3
@@ -94,6 +113,14 @@ CURRENT_SCHEMA_VERSION = 3
 
 def init_db():
     with get_conn() as conn:
+        # WAL mode lets readers and writers avoid blocking each other in
+        # most cases — a much better fit here than the default rollback
+        # journal, since the scheduler writes continuously in its own
+        # thread while web requests read/write on theirs. This setting is
+        # stored in the database file itself, so it only needs setting
+        # once, but PRAGMA calls are cheap and idempotent, so no harm in
+        # it running on every startup.
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
         row = conn.execute("SELECT version FROM schema_version").fetchone()
         if row is None:
