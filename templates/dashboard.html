@@ -24,6 +24,11 @@
 
   <section class="panel">
     <h2>Watch status</h2>
+    <div class="status-key">
+      <span class="status-key-item"><span class="lamp lamp--live"></span> In stock, alert sent</span>
+      <span class="status-key-item"><span class="lamp lamp--warn"></span> In stock, but over your price cap, no alert</span>
+      <span class="status-key-item"><span class="lamp lamp--idle"></span> Sold out, paused, or not checked yet</span>
+    </div>
     {% if fx_stale %}
     <p class="hint fx-note">Exchange rates couldn't be freshly fetched, prices below may be approximate.</p>
     {% endif %}

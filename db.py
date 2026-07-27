@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS status_log (
     price REAL,
     over_msrp_pct REAL,
     ignored_over_price INTEGER NOT NULL DEFAULT 0,
-    raw_status TEXT
+    raw_status TEXT,
+    error_detail TEXT
 );
 
 CREATE TABLE IF NOT EXISTS alerts_sent (
@@ -108,7 +109,7 @@ def _lock_down_wal_sidecar_files():
                 pass
 
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def init_db():
@@ -154,6 +155,12 @@ def _run_migrations(conn):
         if "watchlist" in tables:
             _migrate_watchlist_to_products(conn)
         conn.execute("UPDATE schema_version SET version = 3")
+
+    if version < 4:
+        status_cols = [c["name"] for c in conn.execute("PRAGMA table_info(status_log)").fetchall()]
+        if "error_detail" not in status_cols:
+            conn.execute("ALTER TABLE status_log ADD COLUMN error_detail TEXT")
+        conn.execute("UPDATE schema_version SET version = 4")
 
 
 def _migrate_watchlist_to_products(conn):
@@ -379,14 +386,16 @@ def list_retailers_for_polling(active_only=True):
 
 # --- Status log (per product_retailer) ---
 
-def log_status(product_retailer_id, in_stock, price, over_msrp_pct, ignored_over_price, raw_status):
+def log_status(product_retailer_id, in_stock, price, over_msrp_pct, ignored_over_price,
+                raw_status, error_detail=None):
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO status_log
-               (product_retailer_id, ts, in_stock, price, over_msrp_pct, ignored_over_price, raw_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (product_retailer_id, ts, in_stock, price, over_msrp_pct, ignored_over_price,
+                raw_status, error_detail)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (product_retailer_id, time.time(), int(in_stock), price, over_msrp_pct,
-             int(ignored_over_price), raw_status),
+             int(ignored_over_price), raw_status, error_detail),
         )
 
 

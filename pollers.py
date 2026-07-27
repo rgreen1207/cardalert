@@ -35,8 +35,27 @@ def check_target(tcin: str):
         "&pricing_store_id=3991&is_bot=false"
     )
     r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    # Distinguish "Target actively rejected this request" from "the
+    # response was fine but didn't have the shape we expected" — these
+    # are genuinely different situations and were previously both
+    # collapsed into the same generic "Error checking stock." A 403/429
+    # here usually means the hardcoded redsky API key below has been
+    # rotated or rate-limited by Target and needs updating, not that any
+    # particular product is broken.
+    if r.status_code in (401, 403):
+        return {"in_stock": False, "price": None, "raw_status": "BLOCKED_OR_KEY_INVALID",
+                "error_detail": f"HTTP {r.status_code} from Target: {r.text[:300]}"}
+    if r.status_code == 429:
+        return {"in_stock": False, "price": None, "raw_status": "RATE_LIMITED",
+                "error_detail": f"HTTP 429 from Target: {r.text[:300]}"}
     r.raise_for_status()
-    data = r.json()
+    try:
+        data = r.json()
+    except ValueError:
+        # Target returned a 2xx with a body that isn't valid JSON — e.g. an
+        # HTML block/interstitial page instead of the expected API response.
+        return {"in_stock": False, "price": None, "raw_status": "UNEXPECTED_RESPONSE",
+                "error_detail": f"Non-JSON response body: {r.text[:300]}"}
     # .get() rather than direct indexing: Target's API can legitimately
     # return a response missing "product" (delisted items, some
     # restricted/age-gated items, occasional API quirks) — that's a real,

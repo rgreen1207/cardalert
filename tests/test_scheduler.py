@@ -141,3 +141,55 @@ def test_queue_live_fires_again_on_every_poll_while_still_live(monkeypatch):
 
     assert len(dispatched) == 3
     assert len(db.recent_alerts()) == 3
+
+
+def test_poll_one_logs_generic_exception_to_console_and_stores_error_detail(monkeypatch, capsys):
+    """Regression guard: the actual error should reach console + the API
+    (for inspection via a browser's Network tab), while the dashboard
+    only ever shows a masked, generic label. Previously an unhandled
+    exception during polling produced zero console output at all."""
+    import db
+    import pollers
+
+    pid = db.add_product("Item", "pokemon", 1, 10, 0, "")
+    db.add_retailer(pid, "target", "123", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    def raise_error(identifier):
+        raise ConnectionError("connection reset by peer")
+
+    monkeypatch.setitem(pollers.POLLERS, "target", raise_error)
+    scheduler.poll_one(retailer_row)
+
+    captured = capsys.readouterr()
+    assert "connection reset by peer" in captured.out
+
+    status = db.latest_status(retailer_row["id"])
+    assert "connection reset by peer" in status["error_detail"]
+    assert status["raw_status"].startswith("ERROR:")
+
+
+def test_poll_one_logs_poller_provided_error_detail_to_console(monkeypatch, capsys):
+    """Same guarantee, but for pollers that return a clean categorized
+    status (e.g. Target's BLOCKED_OR_KEY_INVALID) instead of raising —
+    the real HTTP detail behind that category should still reach the
+    console and get stored, not just the generic category."""
+    import db
+    import pollers
+
+    pid = db.add_product("Item", "pokemon", 1, 10, 0, "")
+    db.add_retailer(pid, "target", "123", "")
+    retailer_row = db.list_retailers_for_polling()[0]
+
+    monkeypatch.setitem(pollers.POLLERS, "target", lambda identifier: {
+        "in_stock": False, "price": None, "raw_status": "BLOCKED_OR_KEY_INVALID",
+        "error_detail": "HTTP 403 from Target: Forbidden by WAF rule 12345",
+    })
+    scheduler.poll_one(retailer_row)
+
+    captured = capsys.readouterr()
+    assert "Forbidden by WAF rule 12345" in captured.out
+
+    status = db.latest_status(retailer_row["id"])
+    assert status["error_detail"] == "HTTP 403 from Target: Forbidden by WAF rule 12345"
+    assert status["raw_status"] == "BLOCKED_OR_KEY_INVALID"

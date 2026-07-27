@@ -110,9 +110,20 @@
     out.textContent = 'Sending...';
     const res = await fetch('/settings/test-discord', { method: 'POST' });
     const data = await res.json();
-    out.textContent = data.ok
-      ? `✅ Sent (status ${data.status}). Check your Discord channel.`
-      : `❌ ${data.detail || 'Failed to send. Check the webhook URL is saved and correct.'}`;
+    if (!data.ok) {
+      out.textContent = `❌ ${data.detail || 'Failed to send. Check the webhook URL is saved and correct.'}`;
+      return;
+    }
+    let text = `✅ Sent (status ${data.status}).`;
+    if (data.mention_applied) {
+      text += ` Included a ${data.mention_applied} mention — if it's not pinging in Discord, and it's a role, check that role's "Allow anyone to @mention this role" setting.`;
+    } else if (data.mention_skipped_reason) {
+      text += ` No mention sent: ${data.mention_skipped_reason}`;
+    } else {
+      text += ' No mention configured.';
+    }
+    text += ' Check your Discord channel.';
+    out.textContent = text;
   });
 
   const checkBtn = document.getElementById('check-update-btn');

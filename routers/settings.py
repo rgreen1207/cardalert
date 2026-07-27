@@ -65,6 +65,19 @@ def settings_save(
 @router.post("/settings/test-discord")
 def test_discord():
     result = notifier.send_discord("🔔 Test alert from Card Alert. If you see this, your Discord webhook works.")
+    # Report exactly what mention (if any) was actually applied, so the
+    # settings page can show it — this makes "did my mention setting even
+    # get read correctly" verifiable from the UI instead of a guess.
+    mention_type = config.get("discord_mention_type")
+    mention_id = config.get("discord_mention_id").strip()
+    mention_prefix = notifier.discord_mention_prefix()
+    if mention_prefix:
+        result["mention_applied"] = f"{mention_type} ID {mention_id}"
+    elif mention_type in ("user", "role") and mention_id:
+        result["mention_applied"] = None
+        result["mention_skipped_reason"] = "The saved ID isn't purely numeric, so it was skipped rather than sent as broken text."
+    else:
+        result["mention_applied"] = None
     return JSONResponse(result)
 
 
