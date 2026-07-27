@@ -93,6 +93,22 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${SERVICE_NAME}"
 
+echo "Setting up passwordless restart permission for the in-app updater ..."
+# Scoped to exactly one command, restarting this one service, as this one
+# user. This is what lets the "Update now" button on the Settings page
+# restart the app itself after pulling a new release, without you having
+# to SSH in every time. It grants nothing beyond that single command.
+SUDOERS_FILE="/etc/sudoers.d/${SERVICE_NAME}-restart"
+SUDOERS_RULE="${USER} ALL=(root) NOPASSWD: /bin/systemctl restart ${SERVICE_NAME}, /usr/bin/systemctl restart ${SERVICE_NAME}"
+echo "$SUDOERS_RULE" | sudo tee "$SUDOERS_FILE" > /dev/null
+sudo chmod 0440 "$SUDOERS_FILE"
+if ! sudo visudo -c -f "$SUDOERS_FILE" &>/dev/null; then
+  echo "Sudoers rule failed validation, removing it. The in-app updater will"
+  echo "still pull new code, but you'll need to run 'sudo systemctl restart"
+  echo "${SERVICE_NAME}' yourself after using it."
+  sudo rm -f "$SUDOERS_FILE"
+fi
+
 # Figure out an IP to show the user, best-effort.
 IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
 [ -z "$IP_ADDR" ] && IP_ADDR="<this-device's-ip>"
@@ -106,3 +122,6 @@ echo ""
 echo "First visit walks you through an optional setup wizard for alerts"
 echo "(Discord, ntfy, Pushover, SMS). Skip anything you don't want, you"
 echo "can always add it later from the Settings page."
+echo ""
+echo "Future updates: run this same install command again, or use the"
+echo "'Check for updates' button on the Settings page inside the app."

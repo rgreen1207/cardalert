@@ -24,6 +24,9 @@
 
   <section class="panel">
     <h2>Watch status</h2>
+    {% if fx_stale %}
+    <p class="hint fx-note">Exchange rates couldn't be freshly fetched, prices below may be approximate.</p>
+    {% endif %}
     <table class="board-table">
       <thead>
         <tr>
@@ -39,31 +42,47 @@
         </tr>
       </thead>
       <tbody>
-        {% for item in items %}
-        {% set status = item.last_status %}
-        {% set in_stock = status and status.in_stock and not status.ignored_over_price %}
-        {% set ignored = status and status.ignored_over_price %}
-        <tr class="{{ 'row--paused' if not item.active else '' }}">
-          <td>
-            <span class="lamp {{ 'lamp--live' if in_stock else ('lamp--warn' if ignored else 'lamp--idle') }}"></span>
-          </td>
-          <td>{{ item.name }}</td>
-          <td class="mono">{{ item.game }}</td>
-          <td class="mono">{{ item.retailer }}</td>
-          <td class="mono">
-            {% if not item.active %}PAUSED
-            {% elif in_stock %}IN STOCK
-            {% elif ignored %}OVER PRICE CAP
-            {% elif status %}{{ 'SOLD OUT' if status.in_stock == 0 else status.raw_status }}
-            {% else %}—{% endif %}
-          </td>
-          <td class="mono">{% if status and status.price %}{{ currency_symbol }}{{ '%.2f'|format(status.price) }}{% else %}—{% endif %}</td>
-          <td>{% if item.product_url %}<a href="{{ item.product_url }}" target="_blank">view</a>{% endif %}</td>
-          <td class="mono">{{ item.remaining_qty }} / {{ item.target_qty }}</td>
-          <td><button type="button" class="pattern-btn" data-item-id="{{ item.id }}">pattern</button></td>
-        </tr>
+        {% for product in products %}
+        {% if product.retailers %}
+          {% for r in product.retailers %}
+          {% set status = r.last_status %}
+          {% set in_stock = status and status.in_stock and not status.ignored_over_price %}
+          {% set ignored = status and status.ignored_over_price %}
+          <tr class="{{ 'row--paused' if not product.active else '' }}">
+            <td>
+              <span class="lamp {{ 'lamp--live' if in_stock else ('lamp--warn' if ignored else 'lamp--idle') }}"></span>
+            </td>
+            <td>{{ product.name }}{% if product.retailers|length > 1 %}<span class="mono retailer-count"> ({{ loop.index }}/{{ product.retailers|length }})</span>{% endif %}</td>
+            <td class="mono">{{ product.game_display }}</td>
+            <td class="mono">{{ r.retailer_display }}</td>
+            <td class="mono">
+              {% if not product.active %}Paused
+              {% elif in_stock %}In stock
+              {% elif ignored %}Over price cap
+              {% elif status %}{{ status.status_display }}
+              {% else %}—{% endif %}
+            </td>
+            <td class="mono">{% if r.display_price is not none %}{{ currency_symbol }}{{ '%.2f'|format(r.display_price) }}{% else %}—{% endif %}</td>
+            <td>{% if r.product_url %}<a href="{{ r.product_url }}" target="_blank">View</a>{% endif %}</td>
+            <td class="mono">{{ product.remaining_qty }} / {{ product.target_qty }}</td>
+            <td><button type="button" class="pattern-btn" data-retailer-id="{{ r.id }}">Pattern</button></td>
+          </tr>
+          {% endfor %}
         {% else %}
-        <tr><td colspan="8" class="empty">Nothing on the watchlist yet. <a href="/products">Add a product</a> to get started.</td></tr>
+          <tr class="{{ 'row--paused' if not product.active else '' }}">
+            <td><span class="lamp lamp--idle"></span></td>
+            <td>{{ product.name }}</td>
+            <td class="mono">{{ product.game_display }}</td>
+            <td class="mono empty">No retailers attached</td>
+            <td class="mono">—</td>
+            <td class="mono">—</td>
+            <td></td>
+            <td class="mono">{{ product.remaining_qty }} / {{ product.target_qty }}</td>
+            <td></td>
+          </tr>
+        {% endif %}
+        {% else %}
+        <tr><td colspan="9" class="empty">Nothing on the watchlist yet. <a href="/products">Add a product</a> to get started.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -74,11 +93,12 @@
     <h2>Recent alerts</h2>
     <ul class="feed">
       {% for a in alerts %}
-      <li><span class="mono ts">{{ a.ts | int }}</span> {{ a.message }}</li>
+      <li><span class="mono ts">{{ a.when }}</span> {{ a.message }}</li>
       {% else %}
       <li class="empty">No alerts sent yet.</li>
       {% endfor %}
     </ul>
+    <p class="hint">Alerts clear automatically after 7 days.</p>
   </section>
 
   <section class="panel">
@@ -99,10 +119,10 @@
 
   document.querySelectorAll('.pattern-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const id = btn.dataset.itemId;
+      const id = btn.dataset.retailerId;
       const out = document.getElementById('pattern-output');
       out.textContent = 'Loading pattern...';
-      const res = await fetch(`/items/${id}/pattern`);
+      const res = await fetch(`/retailers/${id}/pattern`);
       const data = await res.json();
       if (data.error) { out.textContent = data.error; return; }
       const days = data.top_days.map(d => `${d[0]} (${d[1]}x)`).join(', ');

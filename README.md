@@ -109,7 +109,12 @@ Every step is skippable. The dashboard works immediately either way, and
 anything you skip can be added later from the **Settings** page.
 
 Re-running the same install command later updates an existing install in
-place instead of duplicating it.
+place instead of duplicating it. So does the "Check for updates" button on
+the **Settings** page inside the app itself, which pulls the latest
+release, reinstalls dependencies, and restarts the service, all with one
+click. It relies on a narrowly-scoped sudo rule the installer sets up
+(see Security below) to restart its own service; without that rule the
+update still downloads, it just needs a manual restart to take effect.
 
 ### Manual setup (if you'd rather not run a piped script)
 ```bash
@@ -196,6 +201,14 @@ architectural tradeoffs rather than bugs.
 - Notification-send failures log only the exception type, not the full
   exception string, since that string can include the failing URL, which
   may embed a webhook path or token.
+- The "Update now" button restarts the app via `sudo -n systemctl restart
+  cardalert` in a detached subprocess. This only works non-interactively
+  because `install.sh` sets up a sudoers rule scoped to exactly that one
+  command for exactly this service and this user, nothing broader. All
+  subprocess calls in `updater.py` use fixed argument lists with no
+  `shell=True` and no user-supplied input, so there's no command
+  injection surface even though this feature genuinely executes real
+  commands (bandit-verified, see the CI job).
 
 **Verified, not changed (already fine):**
 - All SQL is parameterized (`?` placeholders), so there's no injection

@@ -335,3 +335,94 @@ main ol li { margin-bottom: 4px; }
 
 .test-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .test-output { font-size: 0.8rem; color: var(--text-dim); font-family: 'IBM Plex Mono', monospace; }
+
+.mention-row { display: flex; gap: 8px; margin-top: 8px; }
+.mention-select {
+  background: #0e1116;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 9px 8px;
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+  flex: 0 0 160px;
+}
+.mention-id-input {
+  flex: 1;
+  background: #0e1116;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 9px 8px;
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+}
+.fx-note { color: var(--amber); }
+.edit-link {
+  color: var(--text-dim);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+.edit-link:hover { color: var(--amber); border-color: var(--amber); }
+
+.retailer-rows-wrapper { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
+.retailer-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 1fr 32px;
+  gap: 8px;
+  align-items: center;
+}
+.retailer-row select, .retailer-row input {
+  background: #0e1116;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.82rem;
+}
+.remove-retailer-row {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.remove-retailer-row:hover { border-color: var(--red); color: var(--red); }
+#add-retailer-row {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--text-dim);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+#add-retailer-row:hover { color: var(--amber); border-color: var(--amber); }
+.submit-wide { grid-column: 1 / -1; }
+
+.retailer-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.retailer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #1b2029;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--text-dim);
+}
+.retailer-pill.pill--live { border-color: var(--green); color: var(--green); }
+.pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.retailer-count { color: var(--text-dim); font-size: 0.75rem; }
+
+.add-form--retailer { margin-top: 14px; }
+.add-retailer-heading { margin-top: 24px; }
