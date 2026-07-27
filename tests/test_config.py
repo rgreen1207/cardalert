@@ -108,3 +108,26 @@ def test_pokemon_center_fast_check_seconds_enforces_floor():
 def test_pokemon_center_fast_check_seconds_handles_garbage_gracefully():
     config.set("pokemon_center_fast_check_seconds", "not-a-number")
     assert config.pokemon_center_fast_check_seconds() >= config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
+
+
+def test_pokemon_center_repeat_alerts_disabled_by_default():
+    assert config.pokemon_center_repeat_alerts_enabled() is False
+
+
+def test_pokemon_center_repeat_alerts_can_be_enabled():
+    config.set("pokemon_center_repeat_alerts", "1")
+    assert config.pokemon_center_repeat_alerts_enabled() is True
+
+
+def test_pokemon_center_repeat_alert_seconds_default():
+    assert config.pokemon_center_repeat_alert_seconds() == 90
+
+
+def test_pokemon_center_repeat_alert_seconds_respects_setting():
+    config.set("pokemon_center_repeat_alert_seconds", "120")
+    assert config.pokemon_center_repeat_alert_seconds() == 120
+
+
+def test_pokemon_center_repeat_alert_seconds_enforces_floor():
+    config.set("pokemon_center_repeat_alert_seconds", "1")
+    assert config.pokemon_center_repeat_alert_seconds() == config.POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS

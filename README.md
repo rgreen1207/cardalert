@@ -169,17 +169,22 @@ page fetch, which is what makes checking this often reasonable. It's
 configurable on the Settings page (default 15 seconds, minimum 10, never
 lower). There's no true push/webhook API available from Pokémon Center
 for this, so fast, light polling is the closest available to "actively
-listening." To keep frequent checks from becoming a flood of alerts,
-"queue is live" alerts share a 90-second cooldown across both checks:
-the first alert fires promptly, repeats are limited to roughly once per
-cooldown window rather than once per check. Change the constants in
+listening."
+
+By default, exactly one alert fires per queue opening — the moment it
+transitions from not-live to live, whichever check (fast or full) catches
+it first. No further alerts while it stays live; a new one only fires if
+it closes and then opens again later. An opt-in setting on Settings
+("Alert me multiple times while the queue is live") switches to repeated
+reminders instead, spaced by a configurable interval (default 90s,
+minimum 30s) for as long as it stays open. Change the constants in
 `scheduler.py` if you need something different.
 
 ## Versioning
-Current version: **v0.0.8**. Changes are logged in [`RELEASE.md`](RELEASE.md)
+Current version: **v0.0.9**. Changes are logged in [`RELEASE.md`](RELEASE.md)
 as they land, under an "Unreleased" heading; cutting a release means
 moving that heading's entries under a new version number and tagging the
-commit (`git tag v0.0.9`, etc.) — the in-app updater checks tags, so a
+commit (`git tag v0.0.10`, etc.) — the in-app updater checks tags, so a
 release isn't "real" for update purposes until it's tagged, not just
 described in RELEASE.md.
 

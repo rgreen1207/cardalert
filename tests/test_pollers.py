@@ -165,6 +165,57 @@ def test_target_falls_back_to_shared_key_when_none_configured(monkeypatch, fake_
     assert "key=9f36aeafbe60771e321a7cc95a78140772ab3e96" in captured_url["url"]
 
 
+def test_discover_target_api_key_tries_candidate_tcins_first(monkeypatch, fake_response):
+    """The actual feature request: use the user's own saved Target
+    products for discovery, not just the fixed example page."""
+    requested_urls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        requested_urls.append(url)
+        if "1011209279" in url:
+            # the fallback example page — should only be hit if the
+            # candidate didn't work, which this test doesn't expect
+            return fake_response(text="no key here")
+        return fake_response(text='"apiKey":"11112222333344445555666677778888"')
+
+    monkeypatch.setattr(pollers.requests, "get", fake_get)
+    key = pollers.discover_target_api_key(candidate_tcins=["1234567890"])
+    assert key == "11112222333344445555666677778888"
+    assert requested_urls[0] == "https://www.target.com/p/-/A-1234567890"
+    assert len(requested_urls) == 1  # never needed the fallback
+
+
+def test_discover_target_api_key_falls_back_when_candidate_has_no_key(monkeypatch, fake_response):
+    def fake_get(url, headers=None, timeout=None):
+        if "1234567890" in url:
+            return fake_response(text="no key on this particular page")
+        return fake_response(text='"apiKey":"99998888777766665555444433332222"')
+
+    monkeypatch.setattr(pollers.requests, "get", fake_get)
+    key = pollers.discover_target_api_key(candidate_tcins=["1234567890"])
+    assert key == "99998888777766665555444433332222"
+
+
+def test_discover_target_api_key_falls_back_when_candidate_fetch_fails(monkeypatch, fake_response):
+    import requests
+
+    def fake_get(url, headers=None, timeout=None):
+        if "1234567890" in url:
+            raise requests.RequestException("404")
+        return fake_response(text='"apiKey":"aaaabbbbccccddddeeeeffff00001111"')
+
+    monkeypatch.setattr(pollers.requests, "get", fake_get)
+    key = pollers.discover_target_api_key(candidate_tcins=["1234567890"])
+    assert key == "aaaabbbbccccddddeeeeffff00001111"
+
+
+def test_discover_target_api_key_no_candidates_uses_fallback_only(monkeypatch, fake_response):
+    monkeypatch.setattr(pollers.requests, "get",
+                         lambda *a, **k: fake_response(text='"apiKey":"12341234123412341234123412341234"'))
+    key = pollers.discover_target_api_key(candidate_tcins=None)
+    assert key == "12341234123412341234123412341234"
+
+
 def test_discover_target_api_key_finds_key_via_redsky_url_pattern(monkeypatch, fake_response):
     html = 'some page content <script>fetch("https://redsky.target.com/foo?key=abcdef0123456789abcdef0123456789&tcin=1")</script>'
     monkeypatch.setattr(pollers.requests, "get", lambda *a, **k: fake_response(text=html))

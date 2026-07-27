@@ -104,9 +104,26 @@
     </section>
 
     <section class="panel">
-      <h2>Pokémon Center queue speed</h2>
-      <p class="hint">Card Alert checks separately, and much more often, for the Pokémon Center queue specifically, so you're not stuck waiting up to 10 minutes for that alert. Each check is lightweight (it only asks "is the queue live," not the full page), which is what makes checking this often reasonable. Lower is faster; {{ pokemon_center_fast_check_floor }} seconds is the fastest allowed, so this can't be set low enough to become genuinely excessive. There's no true instant push notification available from Pokémon Center, this is the closest thing to it.</p>
-      <input type="number" name="pokemon_center_fast_check_seconds" value="{{ values.pokemon_center_fast_check_seconds }}" min="{{ pokemon_center_fast_check_floor }}" step="1" class="wide-input">
+      <h2>Pokémon Center queue</h2>
+      <p class="hint">Two separate checks run for Pokémon Center, at different speeds, for different reasons:</p>
+      <ul class="pc-explainer">
+        <li><strong>Fast check</strong>, set below: only asks "is the queue live right now." Runs continuously, all the time, not limited to any particular window.</li>
+        <li><strong>Full check</strong>: reads actual stock and price. Runs every 10 minutes Mon-Thu 8am-1pm PST (when restocks most often happen), every 30 minutes the rest of the time.</li>
+      </ul>
+      <p class="hint">By default, you get exactly <strong>one alert per queue opening</strong>: the moment it goes live. It stays quiet after that for as long as the queue remains open, and only alerts again if it closes and then opens again later.</p>
+      <label class="pc-field-label">Fast check speed (seconds)
+        <span class="tip" title="Each check is lightweight (it only asks &quot;is the queue live,&quot; not the full page), which is what makes checking this often reasonable. Lower is faster.">?</span>
+        <input type="number" name="pokemon_center_fast_check_seconds" value="{{ values.pokemon_center_fast_check_seconds }}" min="{{ pokemon_center_fast_check_floor }}" step="1" class="wide-input">
+      </label>
+      <p class="hint">Minimum {{ pokemon_center_fast_check_floor }} seconds, so this can't be set low enough to become genuinely excessive. There's no true instant push notification available from Pokémon Center, this is the closest thing to it.</p>
+
+      <label class="checkbox-option pc-repeat-checkbox">
+        <input type="checkbox" name="pokemon_center_repeat_alerts" value="1" {{ 'checked' if values.pokemon_center_repeat_alerts == '1' else '' }}>
+        Alert me multiple times while the queue is live, every
+        <input type="number" name="pokemon_center_repeat_alert_seconds" value="{{ values.pokemon_center_repeat_alert_seconds }}" min="{{ pokemon_center_repeat_alert_floor }}" step="1" class="pc-repeat-seconds-input">
+        seconds
+      </label>
+      <p class="hint">Off by default (one alert per opening, as above). Turn this on if you'd rather get repeated reminders for as long as it stays live, e.g. if a queue opens early in the morning and you want several chances to notice it. Minimum {{ pokemon_center_repeat_alert_floor }} seconds between repeats.</p>
     </section>
 
     <section class="panel">

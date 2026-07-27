@@ -30,6 +30,8 @@ _KEYS = {
     "discord_mention_roles": ("DISCORD_MENTION_ROLES", ""),  # comma-separated role IDs
     "target_api_key": ("TARGET_API_KEY", ""),
     "pokemon_center_fast_check_seconds": ("POKEMON_CENTER_FAST_CHECK_SECONDS", "15"),
+    "pokemon_center_repeat_alerts": ("POKEMON_CENTER_REPEAT_ALERTS", ""),  # "" | "1"
+    "pokemon_center_repeat_alert_seconds": ("POKEMON_CENTER_REPEAT_ALERT_SECONDS", "90"),
 }
 
 CURRENCY_SYMBOLS = {
@@ -78,6 +80,25 @@ def pokemon_center_fast_check_seconds() -> int:
     except (TypeError, ValueError):
         value = 15
     return max(value, POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS)
+
+
+POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS = 30
+
+
+def pokemon_center_repeat_alerts_enabled() -> bool:
+    return get("pokemon_center_repeat_alerts") == "1"
+
+
+def pokemon_center_repeat_alert_seconds() -> int:
+    """Clamped to a floor for the same reason as the fast-check
+    interval — this is only used at all when repeat alerts are enabled,
+    but should still never allow a genuinely excessive repeat rate."""
+    raw = get("pokemon_center_repeat_alert_seconds")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 90
+    return max(value, POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS)
 
 
 # --- Dashboard password (stored as salted hash, never plaintext, DB-only) ---

@@ -32,35 +32,40 @@ TARGET_HEADERS = {
 TIMEOUT = 12
 
 
-def discover_target_api_key():
+def discover_target_api_key(candidate_tcins=None):
     """Best-effort attempt to find a currently-working redsky API key
     automatically, by fetching a Target page and looking for one embedded
     in it. This isn't circumventing anything — the key is something
     Target's own frontend already sends to every visitor's browser, the
     same way the original hardcoded default was found in the first
-    place. Tries a couple of regex patterns since the exact embedding
-    can change with Target's frontend, and always fails gracefully
-    (returns None) so the Settings page can fall back to manual entry
-    rather than erroring out. Not guaranteed to work forever — if Target
-    changes how/whether they embed it, this quietly stops finding one and
-    manual entry is still there."""
-    try:
-        r = requests.get("https://www.target.com/p/-/A-1011209279",
-                          headers=TARGET_HEADERS, timeout=TIMEOUT)
-        r.raise_for_status()
-    except requests.RequestException:
-        return None
+    place. Not guaranteed to work forever — if Target changes how/whether
+    they embed it, this quietly stops finding one and manual entry is
+    still there.
 
-    text = r.text
+    `candidate_tcins`: TCINs of products the user already has saved, if
+    any. Tried first, in order, since those pages are guaranteed to be
+    real and currently live, unlike the one fixed example page used as a
+    fallback when there's nothing to try (or a candidate page doesn't
+    happen to have the key embedded)."""
+    urls_to_try = [f"https://www.target.com/p/-/A-{tcin}" for tcin in (candidate_tcins or [])]
+    urls_to_try.append("https://www.target.com/p/-/A-1011209279")  # fallback example page
+
     patterns = [
         r"redsky\.target\.com[^\"'\s]*?key=([0-9a-f]{32})",
         r'"apiKey"\s*:\s*"([0-9a-f]{32})"',
         r'"redskyApiKey"\s*:\s*"([0-9a-f]{32})"',
     ]
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1)
+
+    for url in urls_to_try:
+        try:
+            r = requests.get(url, headers=TARGET_HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+        except requests.RequestException:
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, r.text)
+            if match:
+                return match.group(1)
     return None
 
 

@@ -13,7 +13,7 @@
     <span class="lamp lamp--live"></span>
     <h1>CARD ALERT</h1>
   </div>
-  <div class="board-meta">
+  <div class="board-meta" id="board-meta">
     <span>Pokémon Center window: <strong class="{{ 'ok' if pc_window_open else 'muted' }}">{{ 'OPEN (polling every 10 min)' if pc_window_open else 'outside window (polling every 30 min)' }}</strong></span>
   </div>
 </header>
@@ -46,7 +46,7 @@
           <th></th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="watch-status-tbody">
         {% for product in products %}
         {% if product.retailers %}
           {% for r in product.retailers %}
@@ -96,7 +96,7 @@
 
   <section class="panel">
     <h2>Recent alerts</h2>
-    <ul class="feed">
+    <ul class="feed" id="alerts-feed">
       {% for a in alerts %}
       <li><span class="mono ts">{{ a.when }}</span> {{ a.message }}</li>
       {% else %}
@@ -108,7 +108,7 @@
 
   <section class="panel">
     <h2>Restock chatter & forecasts</h2>
-    <ul class="feed">
+    <ul class="feed" id="signals-feed">
       {% for s in signals %}
       <li><span class="mono ts">[{{ s.kind|default('chatter') }}] {{ s.source }}</span> <a href="{{ s.url }}" target="_blank">{{ s.title }}</a></li>
       {% else %}
@@ -120,20 +120,52 @@
 </main>
 
 <script>
-  setTimeout(() => location.reload(), 30000);
+  // Quiet refresh: re-fetches this same page in the background every 30s
+  // and swaps in just the fragments that show live data (status table,
+  // alerts, chatter, the Pokémon Center window indicator), instead of
+  // reloading the entire page — no visible flash, no lost scroll
+  // position, no interrupted "Pattern" lookup in progress.
+  const REFRESH_FRAGMENT_IDS = ['watch-status-tbody', 'alerts-feed', 'signals-feed', 'board-meta'];
 
-  document.querySelectorAll('.pattern-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.retailerId;
-      const out = document.getElementById('pattern-output');
-      out.textContent = 'Loading pattern...';
-      const res = await fetch(`/retailers/${id}/pattern`);
-      const data = await res.json();
-      if (data.error) { out.textContent = data.error; return; }
-      const days = data.top_days.map(d => `${d[0]} (${d[1]}x)`).join(', ');
-      const hours = data.top_hours.map(h => `${h[0]} (${h[1]}x)`).join(', ');
-      out.textContent = `${data.total_events} restock event(s) logged. Most common days: ${days}. Most common hours: ${hours}.`;
-    });
+  async function quietRefresh() {
+    try {
+      const res = await fetch(window.location.pathname, { headers: { 'X-Requested-With': 'quiet-refresh' } });
+      if (!res.ok) return;
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      for (const id of REFRESH_FRAGMENT_IDS) {
+        const current = document.getElementById(id);
+        const updated = doc.getElementById(id);
+        if (current && updated) {
+          current.innerHTML = updated.innerHTML;
+        }
+      }
+    } catch (e) {
+      // A failed refresh just means we try again next cycle — no need
+      // to surface this to the user for a background convenience check.
+    } finally {
+      setTimeout(quietRefresh, 30000);
+    }
+  }
+  setTimeout(quietRefresh, 30000);
+
+  // Event delegation, not per-button listeners: the status table's rows
+  // get replaced wholesale on every quiet refresh above, which would
+  // silently drop directly-attached listeners. Delegating from a
+  // stable, never-replaced ancestor means Pattern buttons keep working
+  // after every refresh without needing to re-wire anything.
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.pattern-btn');
+    if (!btn) return;
+    const id = btn.dataset.retailerId;
+    const out = document.getElementById('pattern-output');
+    out.textContent = 'Loading pattern...';
+    const res = await fetch(`/retailers/${id}/pattern`);
+    const data = await res.json();
+    if (data.error) { out.textContent = data.error; return; }
+    const days = data.top_days.map(d => `${d[0]} (${d[1]}x)`).join(', ');
+    const hours = data.top_hours.map(h => `${h[0]} (${h[1]}x)`).join(', ');
+    out.textContent = `${data.total_events} restock event(s) logged. Most common days: ${days}. Most common hours: ${hours}.`;
   });
 </script>
 </body>

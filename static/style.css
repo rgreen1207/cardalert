@@ -524,3 +524,32 @@ button.danger:hover { background: var(--coral-soft); border-color: var(--coral);
   font-size: 0.78rem;
   color: var(--text-dim);
 }
+
+.pc-explainer { margin: 8px 0 12px; padding-left: 20px; color: var(--text-dim); font-size: 0.85rem; line-height: 1.7; }
+.pc-explainer li { margin-bottom: 4px; }
+.pc-explainer strong { color: var(--text); }
+.pc-field-label {
+  display: block;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.pc-repeat-checkbox {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 0.88rem;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.pc-repeat-seconds-input {
+  width: 70px;
+  background: #171331;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-family: 'IBM Plex Mono', monospace;
+}

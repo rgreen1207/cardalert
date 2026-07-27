@@ -569,6 +569,21 @@ def test_products_page_has_progressive_disclosure_for_advanced_fields(client):
     assert 'name="notify_channels"' in section
 
 
+def test_dashboard_no_longer_does_a_full_page_reload(client):
+    """Regression guard for a reported issue: the dashboard tab kept
+    visibly refreshing every 30 seconds. That was a full page reload —
+    replaced with a quiet background fetch that only swaps the
+    data-bearing fragments, so there's no visible flash or lost scroll
+    position."""
+    client.post("/setup/skip")
+    html = client.get("/").text
+    assert "location.reload()" not in html
+    assert 'id="watch-status-tbody"' in html
+    assert 'id="alerts-feed"' in html
+    assert 'id="signals-feed"' in html
+    assert 'id="board-meta"' in html
+
+
 def test_dashboard_shows_status_legend(client):
     """Regression guard: the lamp colors on the dashboard need an
     explanation, not left as an unlabeled mystery."""
@@ -617,7 +632,7 @@ def test_error_detail_reaches_api_but_not_rendered_html(client):
 def test_discover_target_key_endpoint_success(client, monkeypatch):
     client.post("/setup/skip")
     import pollers
-    monkeypatch.setattr(pollers, "discover_target_api_key", lambda: "abcdef0123456789abcdef0123456789")
+    monkeypatch.setattr(pollers, "discover_target_api_key", lambda candidate_tcins=None: "abcdef0123456789abcdef0123456789")
     response = client.post("/settings/discover-target-key")
     data = response.json()
     assert data["ok"] is True
@@ -627,7 +642,7 @@ def test_discover_target_key_endpoint_success(client, monkeypatch):
 def test_discover_target_key_endpoint_failure_falls_back_to_manual(client, monkeypatch):
     client.post("/setup/skip")
     import pollers
-    monkeypatch.setattr(pollers, "discover_target_api_key", lambda: None)
+    monkeypatch.setattr(pollers, "discover_target_api_key", lambda candidate_tcins=None: None)
     response = client.post("/settings/discover-target-key")
     data = response.json()
     assert data["ok"] is False
