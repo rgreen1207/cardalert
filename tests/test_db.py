@@ -1,5 +1,6 @@
 import time
 import sqlite3
+import os
 import db
 
 
@@ -228,6 +229,77 @@ def test_db_file_permissions_are_owner_only():
     st = _os.stat(db.DB_PATH)
     mode = stat.S_IMODE(st.st_mode)
     assert mode == 0o600
+
+
+def test_wal_sidecar_files_are_locked_down_when_present():
+    """WAL mode creates -wal/-shm files that briefly hold the same
+    credential data as the main DB, but SQLite creates them with the
+    process's default umask, not matching the main file's 600. Confirms
+    that gap is closed whenever those files exist."""
+    import stat as _stat
+    pid = db.add_product("Item", "pokemon", 1, 10, 0, "")
+    rid = db.add_retailer(pid, "target", "1", "")
+    db.log_status(rid, in_stock=True, price=10.0, over_msrp_pct=0, ignored_over_price=False, raw_status="AVAILABLE")
+    for suffix in ("-wal", "-shm"):
+        path = db.DB_PATH + suffix
+        if os.path.exists(path):
+            mode = _stat.S_IMODE(os.stat(path).st_mode)
+            assert mode == 0o600, f"{path} has permissive mode {oct(mode)}"
+
+
+def test_wal_mode_is_enabled():
+    """WAL mode lets readers (web requests) and the background scheduler's
+    writes avoid blocking each other in most cases — the default rollback
+    journal is a much worse fit for this app's actual access pattern."""
+    with db.get_conn() as conn:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode.lower() == "wal"
+
+
+def test_concurrent_reads_and_writes_do_not_raise():
+    """Regression guard for a reported bug: /products intermittently
+    500ing. The scheduler writes to status_log continuously in its own
+    thread while web requests read/write on theirs — this simulates that
+    exact pattern (concurrent status_log writes, product reads, and
+    settings writes) and confirms none of it raises 'database is locked'
+    or any other error under real contention, not just a mocked one."""
+    import threading
+
+    pid = db.add_product("Item", "pokemon", 1, 10, 0, "")
+    rid = db.add_retailer(pid, "target", "1", "")
+    errors = []
+
+    def writer():
+        for _ in range(100):
+            try:
+                db.log_status(rid, in_stock=True, price=10.0, over_msrp_pct=0,
+                               ignored_over_price=False, raw_status="AVAILABLE")
+            except Exception as e:
+                errors.append(("writer", e))
+
+    def reader():
+        for _ in range(100):
+            try:
+                db.list_products()
+                db.latest_status(rid)
+            except Exception as e:
+                errors.append(("reader", e))
+
+    def settings_writer():
+        for i in range(100):
+            try:
+                db.set_setting("fx_rates_cache", f'{{"rates":{{"GBP":0.8}},"fetched_at":{i}}}')
+            except Exception as e:
+                errors.append(("settings", e))
+
+    threads = [threading.Thread(target=writer), threading.Thread(target=reader),
+               threading.Thread(target=reader), threading.Thread(target=settings_writer)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
 
 
 def test_migration_from_old_single_retailer_watchlist(tmp_path, monkeypatch):
