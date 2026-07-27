@@ -366,3 +366,38 @@ def test_discord_mention_fields_save_and_load(client):
     import config
     assert config.get("discord_mention_type") == "role"
     assert config.get("discord_mention_id") == "999888777"
+
+
+def test_products_page_never_500s_when_fx_fetch_returns_malformed_data(client, monkeypatch):
+    """Direct regression test for the reported bug: a 500 on /products.
+    Simulates the exchange-rate API returning something unparseable while
+    currency is set to something other than USD (which is what triggers
+    the network call on every page load)."""
+    client.post("/setup/skip")
+    client.post("/settings/save", data={"currency": "GBP"})
+    import json
+    import fx
+
+    class MalformedResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            raise json.JSONDecodeError("bad json", "not json", 0)
+
+    monkeypatch.setattr(fx.requests, "get", lambda *a, **k: MalformedResponse())
+    for path in ["/", "/products"]:
+        response = client.get(path)
+        assert response.status_code == 200
+
+
+def test_ads_config_removed_cleanly(client):
+    """Confirms the removed AdSense feature left no trace: no script
+    tags, no leftover context keys causing template errors."""
+    client.post("/setup/skip")
+    for path in ["/", "/products", "/settings"]:
+        html = client.get(path).text
+        assert "adsense" not in html.lower()
+        assert "adsbygoogle" not in html

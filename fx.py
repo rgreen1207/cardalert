@@ -72,7 +72,12 @@ def get_rate(currency: str) -> dict:
         rate = rates.get(currency)
         if rate:
             return {"rate": rate, "stale": False}
-    except requests.RequestException:
+    except Exception:  # nosec B110
+        # This function's whole contract is "always return a rate, never
+        # raise." A bad exchange-rate response (rate limiting, a proxy
+        # error page, malformed JSON, an unexpected response shape) must
+        # fall through to the cached/fallback rate below, not bubble up
+        # and 500 every page that renders a price.
         pass
 
     # Network failed, or the currency wasn't in the response. Fall back to

@@ -12,6 +12,14 @@ def test_set_and_get_roundtrip():
     assert config.get("discord_webhook_url") == "https://discord.com/api/webhooks/abc"
 
 
+def test_set_strips_whitespace():
+    """Regression guard: a webhook URL or token pasted with a trailing
+    space or newline (common from mobile clipboards) must not silently
+    break the request that uses it later."""
+    config.set("discord_webhook_url", "  https://discord.com/api/webhooks/abc\n")
+    assert config.get("discord_webhook_url") == "https://discord.com/api/webhooks/abc"
+
+
 def test_db_setting_overrides_env(monkeypatch):
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://env-value.example.com")
     assert config.get("discord_webhook_url") == "https://env-value.example.com"

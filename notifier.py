@@ -24,7 +24,7 @@ def send_discord(message: str) -> dict:
     every Discord message (restock alerts, queue-open alerts, restock
     chatter) gets it consistently without every call site needing to
     remember to add it."""
-    url = config.get("discord_webhook_url")
+    url = config.get("discord_webhook_url").strip()
     if not url:
         return {"ok": False, "status": None, "detail": "No Discord webhook URL saved."}
     full_message = discord_mention_prefix() + message
@@ -50,10 +50,10 @@ def discord_mention_prefix() -> str:
 
 
 def send_ntfy(message: str, title: str = "Card Alert"):
-    topic = config.get("ntfy_topic")
+    topic = config.get("ntfy_topic").strip()
     if not topic:
         return
-    server = config.get("ntfy_server") or "https://ntfy.sh"
+    server = (config.get("ntfy_server") or "https://ntfy.sh").strip()
     try:
         requests.post(
             f"{server}/{topic}",
@@ -66,8 +66,8 @@ def send_ntfy(message: str, title: str = "Card Alert"):
 
 
 def send_pushover(message: str, title: str = "Card Alert"):
-    user_key = config.get("pushover_user_key")
-    app_token = config.get("pushover_app_token")
+    user_key = config.get("pushover_user_key").strip()
+    app_token = config.get("pushover_app_token").strip()
     if not all([user_key, app_token]):
         return
     try:
@@ -82,10 +82,10 @@ def send_pushover(message: str, title: str = "Card Alert"):
 
 
 def send_sms(message: str):
-    sid = config.get("twilio_account_sid")
-    token = config.get("twilio_auth_token")
-    from_number = config.get("twilio_from_number")
-    to_number = config.get("twilio_to_number")
+    sid = config.get("twilio_account_sid").strip()
+    token = config.get("twilio_auth_token").strip()
+    from_number = config.get("twilio_from_number").strip()
+    to_number = config.get("twilio_to_number").strip()
     if not all([sid, token, from_number, to_number]):
         return
     try:
