@@ -7,10 +7,10 @@ def test_first_request_redirects_to_setup(client):
     assert "/setup" in response.headers["location"]
 
 
-def test_setup_skip_marks_complete_and_redirects(client):
+async def test_setup_skip_marks_complete_and_redirects(client):
     response = client.post("/setup/skip", follow_redirects=False)
     assert response.status_code == 303
-    assert config.is_setup_complete() is True
+    assert await config.is_setup_complete() is True
 
 
 def test_dashboard_accessible_after_setup(client):
@@ -244,18 +244,18 @@ def test_remove_one_retailer_leaves_others_and_product_intact(client):
     assert product_after["name"] == product["name"]  # product itself untouched
 
 
-def test_settings_save_persists_currency(client):
+async def test_settings_save_persists_currency(client):
     client.post("/setup/skip")
     response = client.post("/settings/save", data={"currency": "GBP"}, follow_redirects=False)
     assert response.status_code == 303
-    assert config.get("currency") == "GBP"
+    assert await config.get("currency") == "GBP"
 
 
-def test_settings_save_sets_dashboard_password(client):
+async def test_settings_save_sets_dashboard_password(client):
     client.post("/setup/skip")
     client.post("/settings/save", data={"currency": "USD", "dashboard_password": "hunter2"})
-    assert config.dashboard_password_is_set() is True
-    assert config.check_dashboard_password("hunter2") is True
+    assert await config.dashboard_password_is_set() is True
+    assert await config.check_dashboard_password("hunter2") is True
 
 
 def test_dashboard_password_blocks_access_until_authenticated(client):
@@ -289,7 +289,10 @@ def test_discord_test_endpoint_fires_when_configured(client, monkeypatch):
         "discord_webhook_url": "https://discord.com/api/webhooks/fake",
     })
     import notifier
-    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+
+    async def fake_send_discord(msg):
+        return {"ok": True, "status": 204, "detail": None}
+    monkeypatch.setattr(notifier, "send_discord", fake_send_discord)
     response = client.post("/settings/test-discord")
     assert response.json()["ok"] is True
 
@@ -307,7 +310,10 @@ def test_discord_test_endpoint_reports_mention_applied(client, monkeypatch):
         "discord_mention_roles": "999888777666555444",
     })
     import notifier
-    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+
+    async def fake_send_discord(msg):
+        return {"ok": True, "status": 204, "detail": None}
+    monkeypatch.setattr(notifier, "send_discord", fake_send_discord)
     response = client.post("/settings/test-discord")
     data = response.json()
     assert data["mention_applied"] == "1 role"
@@ -324,7 +330,10 @@ def test_discord_test_endpoint_reports_multiple_mentions_applied(client, monkeyp
         "discord_mention_roles": "333333333333333333",
     })
     import notifier
-    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+
+    async def fake_send_discord(msg):
+        return {"ok": True, "status": 204, "detail": None}
+    monkeypatch.setattr(notifier, "send_discord", fake_send_discord)
     response = client.post("/settings/test-discord")
     data = response.json()
     assert data["mention_applied"] == "2 users and 1 role"
@@ -338,7 +347,10 @@ def test_discord_test_endpoint_reports_skipped_non_numeric_mention(client, monke
         "discord_mention_users": "not_a_real_id",
     })
     import notifier
-    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+
+    async def fake_send_discord(msg):
+        return {"ok": True, "status": 204, "detail": None}
+    monkeypatch.setattr(notifier, "send_discord", fake_send_discord)
     response = client.post("/settings/test-discord")
     data = response.json()
     assert data["mention_applied"] is None
@@ -355,7 +367,10 @@ def test_discord_test_endpoint_reports_partial_skip(client, monkeypatch):
         "discord_mention_users": "111111111111111111,not_a_real_id",
     })
     import notifier
-    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+
+    async def fake_send_discord(msg):
+        return {"ok": True, "status": 204, "detail": None}
+    monkeypatch.setattr(notifier, "send_discord", fake_send_discord)
     response = client.post("/settings/test-discord")
     data = response.json()
     assert data["mention_applied"] == "1 user"
@@ -369,7 +384,10 @@ def test_discord_test_endpoint_reports_no_mention_when_none_configured(client, m
         "discord_webhook_url": "https://discord.com/api/webhooks/fake",
     })
     import notifier
-    monkeypatch.setattr(notifier, "send_discord", lambda msg: {"ok": True, "status": 204, "detail": None})
+
+    async def fake_send_discord(msg):
+        return {"ok": True, "status": 204, "detail": None}
+    monkeypatch.setattr(notifier, "send_discord", fake_send_discord)
     response = client.post("/settings/test-discord")
     data = response.json()
     assert data["mention_applied"] is None
@@ -378,9 +396,8 @@ def test_discord_test_endpoint_reports_no_mention_when_none_configured(client, m
 
 def test_verify_shopify_endpoint(client, monkeypatch, fake_response):
     client.post("/setup/skip")
-    import pollers
-    monkeypatch.setattr(pollers.requests, "get",
-                         lambda *a, **k: fake_response(json_data={"products": [{"id": 1}]}))
+    from tests.conftest import set_poller_get
+    set_poller_get(lambda *a, **k: fake_response(json_data={"products": [{"id": 1}]}))
     response = client.post("/tools/verify-shopify", data={"domain": "example.com"})
     assert response.json()["is_shopify"] is True
 
@@ -480,7 +497,10 @@ def test_edit_product_converts_msrp_from_display_currency(client, monkeypatch):
     client.post("/setup/skip")
     client.post("/settings/save", data={"currency": "GBP"})
     import fx
-    monkeypatch.setattr(fx, "get_rate", lambda currency: {"rate": 0.80, "stale": False})
+
+    async def fake_get_rate(currency):
+        return {"rate": 0.80, "stale": False}
+    monkeypatch.setattr(fx, "get_rate", fake_get_rate)
     _add_product(client, msrp=80.0)
     product_id = client.get("/api/items").json()[0]["id"]
     client.post(f"/products/{product_id}/edit", data={
@@ -496,7 +516,10 @@ def test_products_page_shows_display_currency_prices(client, monkeypatch):
     client.post("/setup/skip")
     client.post("/settings/save", data={"currency": "GBP"})
     import fx
-    monkeypatch.setattr(fx, "get_rate", lambda currency: {"rate": 0.80, "stale": False})
+
+    async def fake_get_rate(currency):
+        return {"rate": 0.80, "stale": False}
+    monkeypatch.setattr(fx, "get_rate", fake_get_rate)
     # Entered while currency is already GBP, so "100.0" here means 100 GBP.
     # It should store as 125 USD (100 / 0.80) and round-trip back to
     # exactly 100 GBP on display, not get double-converted.
@@ -517,7 +540,7 @@ def test_retailer_and_game_names_are_capitalized_on_products_page(client):
     assert "Pokémon" in html
 
 
-def test_discord_mention_fields_save_and_load(client):
+async def test_discord_mention_fields_save_and_load(client):
     client.post("/setup/skip")
     client.post("/settings/save", data={
         "currency": "USD",
@@ -525,8 +548,8 @@ def test_discord_mention_fields_save_and_load(client):
         "discord_mention_roles": "999888777666555444",
     })
     import config
-    assert config.get("discord_mention_users") == "111111111111111111,222222222222222222"
-    assert config.get("discord_mention_roles") == "999888777666555444"
+    assert await config.get("discord_mention_users") == "111111111111111111,222222222222222222"
+    assert await config.get("discord_mention_roles") == "999888777666555444"
 
 
 def test_products_page_never_500s_when_fx_fetch_returns_malformed_data(client, monkeypatch):
@@ -537,7 +560,6 @@ def test_products_page_never_500s_when_fx_fetch_returns_malformed_data(client, m
     client.post("/setup/skip")
     client.post("/settings/save", data={"currency": "GBP"})
     import json
-    import fx
 
     class MalformedResponse:
         status_code = 200
@@ -548,7 +570,8 @@ def test_products_page_never_500s_when_fx_fetch_returns_malformed_data(client, m
         def json(self):
             raise json.JSONDecodeError("bad json", "not json", 0)
 
-    monkeypatch.setattr(fx.requests, "get", lambda *a, **k: MalformedResponse())
+    from tests.conftest import set_httpx_get
+    set_httpx_get(lambda *a, **k: MalformedResponse())
     for path in ["/", "/products"]:
         response = client.get(path)
         assert response.status_code == 200
@@ -604,7 +627,7 @@ def test_ads_config_removed_cleanly(client):
         assert "adsbygoogle" not in html
 
 
-def test_error_detail_reaches_api_but_not_rendered_html(client):
+async def test_error_detail_reaches_api_but_not_rendered_html(client):
     """Regression guard: the actual error should be inspectable via the
     API (what you'd see in a browser's Network tab) while the rendered
     dashboard/products pages only ever show a masked, generic label —
@@ -614,9 +637,9 @@ def test_error_detail_reaches_api_but_not_rendered_html(client):
     retailer_id = client.get("/api/items").json()[0]["retailers"][0]["id"]
 
     import db
-    db.log_status(retailer_id, in_stock=False, price=None, over_msrp_pct=None,
-                   ignored_over_price=False, raw_status="BLOCKED_OR_KEY_INVALID",
-                   error_detail="HTTP 403 from Target: Forbidden by WAF rule 98765")
+    await db.log_status(retailer_id, in_stock=False, price=None, over_msrp_pct=None,
+                         ignored_over_price=False, raw_status="BLOCKED_OR_KEY_INVALID",
+                         error_detail="HTTP 403 from Target: Forbidden by WAF rule 98765")
 
     api_response = client.get("/api/items").json()
     status = api_response[0]["retailers"][0]["last_status"]
@@ -632,7 +655,10 @@ def test_error_detail_reaches_api_but_not_rendered_html(client):
 def test_discover_target_key_endpoint_success(client, monkeypatch):
     client.post("/setup/skip")
     import pollers
-    monkeypatch.setattr(pollers, "discover_target_api_key", lambda candidate_tcins=None: "abcdef0123456789abcdef0123456789")
+
+    async def fake_discover(candidate_tcins=None):
+        return "abcdef0123456789abcdef0123456789"
+    monkeypatch.setattr(pollers, "discover_target_api_key", fake_discover)
     response = client.post("/settings/discover-target-key")
     data = response.json()
     assert data["ok"] is True
@@ -642,7 +668,10 @@ def test_discover_target_key_endpoint_success(client, monkeypatch):
 def test_discover_target_key_endpoint_failure_falls_back_to_manual(client, monkeypatch):
     client.post("/setup/skip")
     import pollers
-    monkeypatch.setattr(pollers, "discover_target_api_key", lambda candidate_tcins=None: None)
+
+    async def fake_discover(candidate_tcins=None):
+        return None
+    monkeypatch.setattr(pollers, "discover_target_api_key", fake_discover)
     response = client.post("/settings/discover-target-key")
     data = response.json()
     assert data["ok"] is False

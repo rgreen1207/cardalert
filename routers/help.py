@@ -7,6 +7,6 @@ router = APIRouter()
 
 
 @router.get("/help")
-def help_page(request: Request):
-    ctx = common_context(request, "help")
+async def help_page(request: Request):
+    ctx = await common_context(request, "help")
     return templates.TemplateResponse("help.html", ctx)

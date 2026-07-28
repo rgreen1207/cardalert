@@ -42,7 +42,7 @@ async def require_setup(request: Request, call_next):
     if (
         not path.startswith("/static")
         and path not in _EXEMPT_FROM_SETUP_REDIRECT
-        and not config.is_setup_complete()
+        and not await config.is_setup_complete()
     ):
         return RedirectResponse("/setup")
     return await call_next(request)
@@ -50,14 +50,14 @@ async def require_setup(request: Request, call_next):
 
 @app.middleware("http")
 async def require_dashboard_password(request: Request, call_next):
-    if not config.dashboard_password_is_set():
+    if not await config.dashboard_password_is_set():
         return await call_next(request)
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Basic "):
         try:
             decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
             _, _, supplied_password = decoded.partition(":")
-            if config.check_dashboard_password(supplied_password):
+            if await config.check_dashboard_password(supplied_password):
                 return await call_next(request)
         except (ValueError, UnicodeDecodeError):
             pass  # malformed Authorization header, falls through to 401 below
@@ -69,6 +69,6 @@ async def require_dashboard_password(request: Request, call_next):
 
 
 @app.on_event("startup")
-def startup():
-    db.init_db()
-    scheduler.start_background_thread()
+async def startup():
+    await db.init_db()
+    scheduler.start()

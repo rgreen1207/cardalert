@@ -19,15 +19,15 @@ degraded state so the UI can say so.
 """
 import json
 import time
-import requests
+import httpx
 import db
 
 CACHE_TTL_SECONDS = 24 * 3600
 FETCH_TIMEOUT = 8
 
 
-def _load_cache():
-    raw = db.get_setting("fx_rates_cache")
+async def _load_cache():
+    raw = await db.get_setting("fx_rates_cache")
     if not raw:
         return None
     try:
@@ -36,15 +36,16 @@ def _load_cache():
         return None
 
 
-def _save_cache(rates: dict):
-    db.set_setting("fx_rates_cache", json.dumps({"rates": rates, "fetched_at": time.time()}))
+async def _save_cache(rates: dict):
+    await db.set_setting("fx_rates_cache", json.dumps({"rates": rates, "fetched_at": time.time()}))
 
 
-def _fetch_rates() -> dict:
+async def _fetch_rates() -> dict:
     """USD -> {currency: rate} for every currency this app supports."""
     targets = "EUR,GBP,JPY,CAD,AUD,NZD"
     url = f"https://api.frankfurter.app/latest?from=USD&to={targets}"
-    r = requests.get(url, timeout=FETCH_TIMEOUT)
+    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT) as client:
+        r = await client.get(url)
     r.raise_for_status()
     data = r.json()
     rates = data.get("rates", {})
@@ -52,14 +53,14 @@ def _fetch_rates() -> dict:
     return rates
 
 
-def get_rate(currency: str) -> dict:
+async def get_rate(currency: str) -> dict:
     """Returns {"rate": float, "stale": bool}. `stale` is True when this
     is a cached or fallback value rather than a fresh fetch, so the UI can
     show a small "rates may be approximate" note when it matters."""
     if currency == "USD":
         return {"rate": 1.0, "stale": False}
 
-    cache = _load_cache()
+    cache = await _load_cache()
     now = time.time()
     if cache and (now - cache.get("fetched_at", 0)) < CACHE_TTL_SECONDS:
         rate = cache["rates"].get(currency)
@@ -67,8 +68,8 @@ def get_rate(currency: str) -> dict:
             return {"rate": rate, "stale": False}
 
     try:
-        rates = _fetch_rates()
-        _save_cache(rates)
+        rates = await _fetch_rates()
+        await _save_cache(rates)
         rate = rates.get(currency)
         if rate:
             return {"rate": rate, "stale": False}
@@ -88,16 +89,16 @@ def get_rate(currency: str) -> dict:
     return {"rate": 1.0, "stale": True}
 
 
-def usd_to_display(amount, currency: str):
+async def usd_to_display(amount, currency: str):
     if amount is None:
         return None
-    return amount * get_rate(currency)["rate"]
+    return amount * (await get_rate(currency))["rate"]
 
 
-def display_to_usd(amount, currency: str):
+async def display_to_usd(amount, currency: str):
     if amount is None:
         return None
-    rate = get_rate(currency)["rate"]
+    rate = (await get_rate(currency))["rate"]
     if rate == 0:
         return amount
     return amount / rate

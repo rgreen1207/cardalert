@@ -2,132 +2,132 @@ import pytest
 import config
 
 
-def test_get_returns_default_when_unset(monkeypatch):
+async def test_get_returns_default_when_unset(monkeypatch):
     monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
-    assert config.get("discord_webhook_url") == ""
+    assert await config.get("discord_webhook_url") == ""
 
 
-def test_set_and_get_roundtrip():
-    config.set("discord_webhook_url", "https://discord.com/api/webhooks/abc")
-    assert config.get("discord_webhook_url") == "https://discord.com/api/webhooks/abc"
+async def test_set_and_get_roundtrip():
+    await config.set("discord_webhook_url", "https://discord.com/api/webhooks/abc")
+    assert await config.get("discord_webhook_url") == "https://discord.com/api/webhooks/abc"
 
 
-def test_set_strips_whitespace():
+async def test_set_strips_whitespace():
     """Regression guard: a webhook URL or token pasted with a trailing
     space or newline (common from mobile clipboards) must not silently
     break the request that uses it later."""
-    config.set("discord_webhook_url", "  https://discord.com/api/webhooks/abc\n")
-    assert config.get("discord_webhook_url") == "https://discord.com/api/webhooks/abc"
+    await config.set("discord_webhook_url", "  https://discord.com/api/webhooks/abc\n")
+    assert await config.get("discord_webhook_url") == "https://discord.com/api/webhooks/abc"
 
 
-def test_db_setting_overrides_env(monkeypatch):
+async def test_db_setting_overrides_env(monkeypatch):
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://env-value.example.com")
-    assert config.get("discord_webhook_url") == "https://env-value.example.com"
-    config.set("discord_webhook_url", "https://db-value.example.com")
-    assert config.get("discord_webhook_url") == "https://db-value.example.com"
+    assert await config.get("discord_webhook_url") == "https://env-value.example.com"
+    await config.set("discord_webhook_url", "https://db-value.example.com")
+    assert await config.get("discord_webhook_url") == "https://db-value.example.com"
 
 
-def test_unknown_key_raises():
+async def test_unknown_key_raises():
     with pytest.raises(KeyError):
-        config.get("not_a_real_setting")
+        await config.get("not_a_real_setting")
     with pytest.raises(KeyError):
-        config.set("not_a_real_setting", "value")
+        await config.set("not_a_real_setting", "value")
 
 
-def test_currency_symbol_defaults_to_usd():
-    assert config.get("currency") == "USD"
-    assert config.currency_symbol() == "$"
+async def test_currency_symbol_defaults_to_usd():
+    assert await config.get("currency") == "USD"
+    assert await config.currency_symbol() == "$"
 
 
-def test_currency_symbol_updates_with_setting():
-    config.set("currency", "GBP")
-    assert config.currency_symbol() == "£"
-    config.set("currency", "JPY")
-    assert config.currency_symbol() == "¥"
+async def test_currency_symbol_updates_with_setting():
+    await config.set("currency", "GBP")
+    assert await config.currency_symbol() == "£"
+    await config.set("currency", "JPY")
+    assert await config.currency_symbol() == "¥"
 
 
-def test_currency_symbol_unknown_currency_falls_back_to_dollar():
-    config.set("currency", "XYZ")
-    assert config.currency_symbol() == "$"
+async def test_currency_symbol_unknown_currency_falls_back_to_dollar():
+    await config.set("currency", "XYZ")
+    assert await config.currency_symbol() == "$"
 
 
-def test_setup_completion_flow():
-    assert config.is_setup_complete() is False
-    config.mark_setup_complete()
-    assert config.is_setup_complete() is True
+async def test_setup_completion_flow():
+    assert await config.is_setup_complete() is False
+    await config.mark_setup_complete()
+    assert await config.is_setup_complete() is True
 
 
-def test_dashboard_password_not_set_by_default():
-    assert config.dashboard_password_is_set() is False
-    assert config.check_dashboard_password("anything") is False
+async def test_dashboard_password_not_set_by_default():
+    assert await config.dashboard_password_is_set() is False
+    assert await config.check_dashboard_password("anything") is False
 
 
-def test_dashboard_password_set_and_check():
-    config.set_dashboard_password("hunter2")
-    assert config.dashboard_password_is_set() is True
-    assert config.check_dashboard_password("hunter2") is True
-    assert config.check_dashboard_password("wrong") is False
+async def test_dashboard_password_set_and_check():
+    await config.set_dashboard_password("hunter2")
+    assert await config.dashboard_password_is_set() is True
+    assert await config.check_dashboard_password("hunter2") is True
+    assert await config.check_dashboard_password("wrong") is False
 
 
-def test_dashboard_password_never_stored_plaintext():
-    config.set_dashboard_password("hunter2")
+async def test_dashboard_password_never_stored_plaintext():
+    await config.set_dashboard_password("hunter2")
     import db
-    all_settings_values = " ".join(db.all_settings().values())
+    all_settings_values = " ".join((await db.all_settings()).values())
     assert "hunter2" not in all_settings_values
 
 
-def test_dashboard_password_cleared_with_empty_string():
-    config.set_dashboard_password("hunter2")
-    assert config.dashboard_password_is_set() is True
-    config.set_dashboard_password("")
-    assert config.dashboard_password_is_set() is False
+async def test_dashboard_password_cleared_with_empty_string():
+    await config.set_dashboard_password("hunter2")
+    assert await config.dashboard_password_is_set() is True
+    await config.set_dashboard_password("")
+    assert await config.dashboard_password_is_set() is False
 
 
-def test_all_values_includes_every_known_key():
-    values = config.all_values()
+async def test_all_values_includes_every_known_key():
+    values = await config.all_values()
     for key in config._KEYS:
         assert key in values
 
 
-def test_pokemon_center_fast_check_seconds_default():
-    assert config.pokemon_center_fast_check_seconds() == 15
+async def test_pokemon_center_fast_check_seconds_default():
+    assert await config.pokemon_center_fast_check_seconds() == 15
 
 
-def test_pokemon_center_fast_check_seconds_respects_setting():
-    config.set("pokemon_center_fast_check_seconds", "30")
-    assert config.pokemon_center_fast_check_seconds() == 30
+async def test_pokemon_center_fast_check_seconds_respects_setting():
+    await config.set("pokemon_center_fast_check_seconds", "30")
+    assert await config.pokemon_center_fast_check_seconds() == 30
 
 
-def test_pokemon_center_fast_check_seconds_enforces_floor():
+async def test_pokemon_center_fast_check_seconds_enforces_floor():
     """The actual safety requirement: this can never be set low enough
     to become genuinely excessive polling."""
-    config.set("pokemon_center_fast_check_seconds", "1")
-    assert config.pokemon_center_fast_check_seconds() == config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
+    await config.set("pokemon_center_fast_check_seconds", "1")
+    assert await config.pokemon_center_fast_check_seconds() == config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
 
 
-def test_pokemon_center_fast_check_seconds_handles_garbage_gracefully():
-    config.set("pokemon_center_fast_check_seconds", "not-a-number")
-    assert config.pokemon_center_fast_check_seconds() >= config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
+async def test_pokemon_center_fast_check_seconds_handles_garbage_gracefully():
+    await config.set("pokemon_center_fast_check_seconds", "not-a-number")
+    assert await config.pokemon_center_fast_check_seconds() >= config.POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS
 
 
-def test_pokemon_center_repeat_alerts_disabled_by_default():
-    assert config.pokemon_center_repeat_alerts_enabled() is False
+async def test_pokemon_center_repeat_alerts_disabled_by_default():
+    assert await config.pokemon_center_repeat_alerts_enabled() is False
 
 
-def test_pokemon_center_repeat_alerts_can_be_enabled():
-    config.set("pokemon_center_repeat_alerts", "1")
-    assert config.pokemon_center_repeat_alerts_enabled() is True
+async def test_pokemon_center_repeat_alerts_can_be_enabled():
+    await config.set("pokemon_center_repeat_alerts", "1")
+    assert await config.pokemon_center_repeat_alerts_enabled() is True
 
 
-def test_pokemon_center_repeat_alert_seconds_default():
-    assert config.pokemon_center_repeat_alert_seconds() == 90
+async def test_pokemon_center_repeat_alert_seconds_default():
+    assert await config.pokemon_center_repeat_alert_seconds() == 90
 
 
-def test_pokemon_center_repeat_alert_seconds_respects_setting():
-    config.set("pokemon_center_repeat_alert_seconds", "120")
-    assert config.pokemon_center_repeat_alert_seconds() == 120
+async def test_pokemon_center_repeat_alert_seconds_respects_setting():
+    await config.set("pokemon_center_repeat_alert_seconds", "120")
+    assert await config.pokemon_center_repeat_alert_seconds() == 120
 
 
-def test_pokemon_center_repeat_alert_seconds_enforces_floor():
-    config.set("pokemon_center_repeat_alert_seconds", "1")
-    assert config.pokemon_center_repeat_alert_seconds() == config.POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS
+async def test_pokemon_center_repeat_alert_seconds_enforces_floor():
+    await config.set("pokemon_center_repeat_alert_seconds", "1")
+    assert await config.pokemon_center_repeat_alert_seconds() == config.POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS

@@ -35,6 +35,74 @@ release means both: add an entry here, then tag the commit.
   has, and that's now documented honestly rather than implied to be a
   real fix for anti-bot blocking.
 
+## [0.0.13]
+### Fixed
+- **Reverted a scope-boundary violation introduced in the last pull**:
+  `pollers.py` had grown a `sync_target_session()` that launched headless
+  Chromium via Playwright to harvest Target's anti-bot session cookies
+  and Redsky API key, then replayed them on requests. That's
+  session-token capture, the exact thing this project's `PROJECT_LOG.md`
+  and `LICENSE.md` §4 rule out — detection/alerting/tracking only, never
+  anything that holds or replays a captured session. Removed
+  `sync_target_session`/`TARGET_SESSION` entirely, dropped
+  `playwright`/`greenlet`/`pyee` from `requirements.txt`, and restored
+  `check_target`'s Redsky URL, which the same pull had broken down to a
+  bare `https://target.com` (would have failed every request).
+- `check_target` now sends `TARGET_HEADERS` (`Accept: application/json`,
+  `Origin`, `Referer`) instead of the generic `HEADERS` — that dict
+  existed but was never actually used, so every request looked less like
+  a real browser hit than it should have.
+- `check_bestbuy` had silently regressed to hitting a made-up
+  `bestbuy.com/{sku}/fulfillment` endpoint instead of the documented,
+  official Best Buy Products API — always failed. Restored the
+  API-key-based implementation.
+- `check_amazon`'s first-party/third-party seller detection had
+  regressed to structural HTML checks (specific element IDs/merchant
+  input fields) that don't match the page shapes this was built and
+  tested against, silently misclassifying in-stock first-party listings
+  as third-party. Restored the original regex-based detection.
+- Removed `license.py` — dead code left over from the fully-removed
+  paywall (see `PROJECT_LOG.md`, "Paywall fully removed"), referencing
+  two `config` keys that no longer exist and would `KeyError` on any
+  call.
+- `signals.py`'s `RETAILER_NAMES` was missing `amazon`, `lgs_shopify`,
+  and `lgs_generic`, so Reddit restock-chatter scanning silently never
+  covered those retailers. Added them, fixed "Barnes Noble" →
+  "Barnes & Noble", and deduped the lookup.
+- The repo's ignore file was named `gitignore` instead of `.gitignore`,
+  so git never actually read it — `.venv/`, `__pycache__/`, etc. all
+  showed as untracked. Renamed.
+- Six `test_pollers.py` mocks for Target's HTTP layer used a narrower
+  function signature than `check_target`/`discover_target_api_key`
+  actually call (missing the `impersonate` kwarg), so they'd been
+  failing independent of any of the above. Widened the mocks.
+
+### Changed
+- **The whole app is now async**, top to bottom: `db.py` runs on
+  `aiosqlite` instead of blocking `sqlite3`, `pollers.py` uses
+  `curl_cffi`'s `AsyncSession`, and `notifier.py`/`signals.py`/`fx.py`
+  use `httpx.AsyncClient`. Every route in `routers/` and the scheduler
+  loop are `async def`, all sharing FastAPI's single event loop instead
+  of the scheduler running in its own background thread.
+- The scheduler now polls every retailer that's due in a given tick
+  **concurrently** (`asyncio.gather`) instead of one at a time — wall
+  clock per tick is the slowest single check, not the sum of all of
+  them.
+- To keep that concurrency from turning into a burst of simultaneous,
+  identically-timed requests at the same retailer (itself a pattern
+  anti-bot systems watch for), added a per-retailer-type concurrency cap
+  (`RETAILER_CONCURRENCY = 3`) and a small random jitter
+  (0–2s) before each request, so different products at the same
+  retailer don't all hit the wire in the same instant.
+- Scheduler now backs off exponentially (up to 8x the normal interval)
+  on a retailer that comes back captcha/anti-bot/rate-limited/blocked
+  several times in a row, instead of continuing to poll it at full
+  speed while already blocked — resets to normal cadence the moment a
+  check succeeds again.
+- `signals.py`'s Reddit chatter/forecast search now fans out its
+  per-subreddit, per-retailer searches concurrently too (capped at 5 at
+  once), instead of running them one after another.
+
 ## [0.0.9]
 Continuation of v0.0.8's Pokémon Center and Target work, plus a fix for
 a jarring UI issue.

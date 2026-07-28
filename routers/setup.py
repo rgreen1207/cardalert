@@ -9,16 +9,16 @@ router = APIRouter()
 
 
 @router.get("/setup")
-def setup_wizard(request: Request):
+async def setup_wizard(request: Request):
     return templates.TemplateResponse("setup.html", {
         "request": request,
-        "values": config.all_values(),
+        "values": await config.all_values(),
         "donate_url": DONATE_URL,
     })
 
 
 @router.post("/setup/save")
-def setup_save(
+async def setup_save(
     discord_webhook_url: str = Form(""),
     ntfy_topic: str = Form(""),
     pushover_user_key: str = Form(""),
@@ -42,14 +42,14 @@ def setup_save(
         "bestbuy_api_key": bestbuy_api_key,
     }.items():
         if value:
-            config.set(key, value)
+            await config.set(key, value)
     if dashboard_password:
-        config.set_dashboard_password(dashboard_password)
-    config.mark_setup_complete()
+        await config.set_dashboard_password(dashboard_password)
+    await config.mark_setup_complete()
     return RedirectResponse("/products", status_code=303)
 
 
 @router.post("/setup/skip")
-def setup_skip():
-    config.mark_setup_complete()
+async def setup_skip():
+    await config.mark_setup_complete()
     return RedirectResponse("/products", status_code=303)

@@ -8,12 +8,12 @@ Cost model, unchanged from before:
   paid to Pushover by the end user. SMS: end user's own Twilio account.
 Card Alert never centralizes or bills for any of these.
 """
-import requests
+import httpx
 import config
 import display
 
 
-def send_discord(message: str) -> dict:
+async def send_discord(message: str) -> dict:
     """Returns {"ok": bool, "status": int|None, "detail": str|None}. The
     detail field carries Discord's actual error response when a send
     fails, since "it didn't work" with no further information is nearly
@@ -24,27 +24,27 @@ def send_discord(message: str) -> dict:
     every Discord message (restock alerts, queue-open alerts, restock
     chatter) gets it consistently without every call site needing to
     remember to add it."""
-    url = config.get("discord_webhook_url").strip()
+    url = (await config.get("discord_webhook_url")).strip()
     if not url:
         return {"ok": False, "status": None, "detail": "No Discord webhook URL saved."}
-    full_message = discord_mention_prefix() + message
+    full_message = await discord_mention_prefix() + message
     try:
-        r = requests.post(
-            url,
-            json={
-                "content": full_message,
-                # Without this, Discord can render "<@id>"/"<@&id>" as
-                # literal unlinked text instead of an actual ping —
-                # explicitly allowing both mention types is what makes
-                # the mention actually notify the user or role.
-                "allowed_mentions": {"parse": ["users", "roles"]},
-            },
-            timeout=8,
-        )
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.post(
+                url,
+                json={
+                    "content": full_message,
+                    # Without this, Discord can render "<@id>"/"<@&id>" as
+                    # literal unlinked text instead of an actual ping —
+                    # explicitly allowing both mention types is what makes
+                    # the mention actually notify the user or role.
+                    "allowed_mentions": {"parse": ["users", "roles"]},
+                },
+            )
         if r.status_code < 300:
             return {"ok": True, "status": r.status_code, "detail": None}
         return {"ok": False, "status": r.status_code, "detail": r.text[:300]}
-    except requests.RequestException as e:
+    except httpx.HTTPError as e:
         return {"ok": False, "status": None, "detail": f"{type(e).__name__}: could not reach Discord."}
 
 
@@ -58,84 +58,84 @@ def _parse_mention_ids(raw: str) -> list:
     return [part.strip() for part in raw.split(",") if part.strip().isdigit()]
 
 
-def discord_mention_prefix() -> str:
+async def discord_mention_prefix() -> str:
     """Builds a "<@id> <@id2> <@&roleId>" prefix from the Settings page's
     comma-separated user/role ID fields, or an empty string if none are
     set. Discord IDs are always purely numeric (a "snowflake") — any
     non-numeric entry (e.g. a username typed by mistake instead of the
     numeric ID from "Copy ID") is dropped rather than sent as a broken
     tag that could never resolve to a real mention anyway."""
-    user_ids = _parse_mention_ids(config.get("discord_mention_users"))
-    role_ids = _parse_mention_ids(config.get("discord_mention_roles"))
+    user_ids = _parse_mention_ids(await config.get("discord_mention_users"))
+    role_ids = _parse_mention_ids(await config.get("discord_mention_roles"))
     tags = [f"<@{uid}>" for uid in user_ids] + [f"<@&{rid}>" for rid in role_ids]
     if not tags:
         return ""
     return " ".join(tags) + " "
 
 
-def send_ntfy(message: str, title: str = "Card Alert"):
-    topic = config.get("ntfy_topic").strip()
+async def send_ntfy(message: str, title: str = "Card Alert"):
+    topic = (await config.get("ntfy_topic")).strip()
     if not topic:
         return
-    server = (config.get("ntfy_server") or "https://ntfy.sh").strip()
+    server = ((await config.get("ntfy_server")) or "https://ntfy.sh").strip()
     try:
-        requests.post(
-            f"{server}/{topic}",
-            data=message.encode("utf-8"),
-            headers={"Title": title, "Priority": "high"},
-            timeout=8,
-        )
-    except requests.RequestException as e:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(
+                f"{server}/{topic}",
+                content=message.encode("utf-8"),
+                headers={"Title": title, "Priority": "high"},
+            )
+    except httpx.HTTPError as e:
         print("[notifier] ntfy send failed:", type(e).__name__)
 
 
-def send_pushover(message: str, title: str = "Card Alert"):
-    user_key = config.get("pushover_user_key").strip()
-    app_token = config.get("pushover_app_token").strip()
+async def send_pushover(message: str, title: str = "Card Alert"):
+    user_key = (await config.get("pushover_user_key")).strip()
+    app_token = (await config.get("pushover_app_token")).strip()
     if not all([user_key, app_token]):
         return
     try:
-        requests.post(
-            "https://api.pushover.net/1/messages.json",
-            data={"token": app_token, "user": user_key, "title": title,
-                  "message": message, "priority": 1},
-            timeout=8,
-        )
-    except requests.RequestException as e:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(
+                "https://api.pushover.net/1/messages.json",
+                data={"token": app_token, "user": user_key, "title": title,
+                      "message": message, "priority": 1},
+            )
+    except httpx.HTTPError as e:
         print("[notifier] Pushover send failed:", type(e).__name__)
 
 
-def send_sms(message: str):
-    sid = config.get("twilio_account_sid").strip()
-    token = config.get("twilio_auth_token").strip()
-    from_number = config.get("twilio_from_number").strip()
-    to_number = config.get("twilio_to_number").strip()
+async def send_sms(message: str):
+    sid = (await config.get("twilio_account_sid")).strip()
+    token = (await config.get("twilio_auth_token")).strip()
+    from_number = (await config.get("twilio_from_number")).strip()
+    to_number = (await config.get("twilio_to_number")).strip()
     if not all([sid, token, from_number, to_number]):
         return
     try:
-        requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
-            auth=(sid, token),
-            data={"From": from_number, "To": to_number, "Body": message[:1500]},
-            timeout=8,
-        )
-    except requests.RequestException as e:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+                auth=(sid, token),
+                data={"From": from_number, "To": to_number, "Body": message[:1500]},
+            )
+    except httpx.HTTPError as e:
         print("[notifier] SMS send failed:", type(e).__name__)
 
 
-def dispatch(message: str, channel: str = "discord"):
+async def dispatch(message: str, channel: str = "discord"):
     """channel: dashboard | discord | ntfy | pushover | sms. Discord
     messages get the configured @mention prefix automatically inside
     send_discord; other channels don't support Discord-style mentions so
     they're left plain."""
     if channel == "discord":
-        send_discord(message)
+        await send_discord(message)
     elif channel == "ntfy":
-        send_ntfy(message)
+        await send_ntfy(message)
     elif channel == "pushover":
-        send_pushover(message)
+        await send_pushover(message)
     elif channel == "sms":
-        send_sms(message)
+        await send_sms(message)
     # "dashboard" -> nothing to do, alerts_sent is read from the DB on page load
 
 

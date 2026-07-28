@@ -4,6 +4,16 @@ import time
 import scheduler
 
 
+def async_return(value):
+    """Turns a constant into a zero-arg-tolerant async callable — a lot
+    of these tests just need a poller/notifier stand-in that returns a
+    fixed value, and none of the async equivalents of `lambda *a, **k:
+    value` read any more clearly than this."""
+    async def _f(*a, **k):
+        return value
+    return _f
+
+
 def test_channels_for_splits_csv():
     item = {"notify_channel": "discord,ntfy"}
     assert scheduler._channels_for(item) == ["discord", "ntfy"]
@@ -62,7 +72,7 @@ def test_should_poll_now_respects_interval():
     item = {"id": 999, "retailer": "target"}
     # never polled before -> should poll
     assert scheduler.should_poll_now(item) is True
-    scheduler._last_polled[999] = __import__("time").time()
+    scheduler._last_polled[999] = time.time()
     # just polled -> should not poll again immediately
     assert scheduler.should_poll_now(item) is False
 
@@ -90,7 +100,7 @@ def test_should_poll_now_pokemon_center_never_fully_blocked_outside_window(monke
     assert scheduler.should_poll_now(item) is False
 
 
-def test_queue_live_dispatches_alert_and_records_it(monkeypatch):
+async def test_queue_live_dispatches_alert_and_records_it(monkeypatch):
     """End-to-end regression guard: this path had zero test coverage
     before, despite existing in the code. Confirms that when a poller
     reports raw_status QUEUE_LIVE, an alert actually dispatches to the
@@ -100,25 +110,28 @@ def test_queue_live_dispatches_alert_and_records_it(monkeypatch):
     import pollers
     import notifier
 
-    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
     dispatched = []
     monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
-                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
-    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+                         async_return({"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"}))
 
-    scheduler.poll_one(retailer_row)
+    async def fake_dispatch(msg, ch):
+        dispatched.append((ch, msg))
+    monkeypatch.setattr(notifier, "dispatch", fake_dispatch)
+
+    await scheduler.poll_one(retailer_row)
 
     assert dispatched == [("discord", dispatched[0][1])]
     assert "queue just went LIVE" in dispatched[0][1]
-    alerts = db.recent_alerts()
+    alerts = await db.recent_alerts()
     assert len(alerts) == 1
     assert "queue just went LIVE" in alerts[0]["message"]
 
 
-def test_queue_live_alerts_once_per_opening_by_default(monkeypatch):
+async def test_queue_live_alerts_once_per_opening_by_default(monkeypatch):
     """Design update: the default is exactly one alert per opening, not
     periodic reminders — repeats are opt-in (see the repeat-alert tests
     below), matching the explicit request that a queue going live should
@@ -127,24 +140,27 @@ def test_queue_live_alerts_once_per_opening_by_default(monkeypatch):
     import pollers
     import notifier
 
-    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
     dispatched = []
     monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
-                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
-    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+                         async_return({"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"}))
 
-    scheduler.poll_one(retailer_row)
-    scheduler.poll_one(retailer_row)  # still live — should NOT re-alert by default
-    scheduler.poll_one(retailer_row)  # still live — same
+    async def fake_dispatch(msg, ch):
+        dispatched.append((ch, msg))
+    monkeypatch.setattr(notifier, "dispatch", fake_dispatch)
+
+    await scheduler.poll_one(retailer_row)
+    await scheduler.poll_one(retailer_row)  # still live — should NOT re-alert by default
+    await scheduler.poll_one(retailer_row)  # still live — same
 
     assert len(dispatched) == 1
-    assert len(db.recent_alerts()) == 1
+    assert len(await db.recent_alerts()) == 1
 
 
-def test_queue_live_alerts_again_after_closing_and_reopening(monkeypatch):
+async def test_queue_live_alerts_again_after_closing_and_reopening(monkeypatch):
     """A genuinely new opening (closed, then live again) is a new
     event — it should get its own alert, not be suppressed by the first
     one having already fired."""
@@ -152,30 +168,33 @@ def test_queue_live_alerts_again_after_closing_and_reopening(monkeypatch):
     import pollers
     import notifier
 
-    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
     dispatched = []
-    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+
+    async def fake_dispatch(msg, ch):
+        dispatched.append((ch, msg))
+    monkeypatch.setattr(notifier, "dispatch", fake_dispatch)
 
     monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
-                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
-    scheduler.poll_one(retailer_row)
+                         async_return({"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"}))
+    await scheduler.poll_one(retailer_row)
     assert len(dispatched) == 1
 
     monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
-                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "SOLD_OUT"})
-    scheduler.poll_one(retailer_row)  # queue closes
+                         async_return({"in_stock": False, "price": None, "raw_status": "SOLD_OUT"}))
+    await scheduler.poll_one(retailer_row)  # queue closes
     assert len(dispatched) == 1  # closing doesn't alert
 
     monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
-                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
-    scheduler.poll_one(retailer_row)  # opens again — a new event
+                         async_return({"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"}))
+    await scheduler.poll_one(retailer_row)  # opens again — a new event
     assert len(dispatched) == 2
 
 
-def test_queue_live_repeat_alerts_when_enabled(monkeypatch):
+async def test_queue_live_repeat_alerts_when_enabled(monkeypatch):
     """The actual feature request: an opt-in setting to receive multiple
     alerts while the queue stays live, spaced by a configurable
     interval, instead of just the one."""
@@ -184,38 +203,41 @@ def test_queue_live_repeat_alerts_when_enabled(monkeypatch):
     import notifier
     import config
 
-    config.set("pokemon_center_repeat_alerts", "1")
-    config.set("pokemon_center_repeat_alert_seconds", "60")
+    await config.set("pokemon_center_repeat_alerts", "1")
+    await config.set("pokemon_center_repeat_alert_seconds", "60")
 
-    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
     dispatched = []
     monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
-                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
-    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
+                         async_return({"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"}))
 
-    scheduler.poll_one(retailer_row)
+    async def fake_dispatch(msg, ch):
+        dispatched.append((ch, msg))
+    monkeypatch.setattr(notifier, "dispatch", fake_dispatch)
+
+    await scheduler.poll_one(retailer_row)
     assert len(dispatched) == 1
 
-    scheduler.poll_one(retailer_row)  # still within the 60s repeat interval — no repeat yet
+    await scheduler.poll_one(retailer_row)  # still within the 60s repeat interval — no repeat yet
     assert len(dispatched) == 1
 
     # Simulate the repeat interval having elapsed
-    with db.get_conn() as conn:
-        conn.execute("UPDATE alerts_sent SET ts = ts - 61")
+    async with db.get_conn() as conn:
+        await conn.execute("UPDATE alerts_sent SET ts = ts - 61")
 
-    scheduler.poll_one(retailer_row)
+    await scheduler.poll_one(retailer_row)
     assert len(dispatched) == 2
 
 
-def test_queue_live_repeat_alerts_disabled_by_default(monkeypatch):
+async def test_queue_live_repeat_alerts_disabled_by_default():
     import config
-    assert config.pokemon_center_repeat_alerts_enabled() is False
+    assert await config.pokemon_center_repeat_alerts_enabled() is False
 
 
-def test_poll_one_logs_generic_exception_to_console_and_stores_error_detail(monkeypatch, capsys):
+async def test_poll_one_logs_generic_exception_to_console_and_stores_error_detail(monkeypatch, capsys):
     """Regression guard: the actual error should reach console + the API
     (for inspection via a browser's Network tab), while the dashboard
     only ever shows a masked, generic label. Previously an unhandled
@@ -223,25 +245,25 @@ def test_poll_one_logs_generic_exception_to_console_and_stores_error_detail(monk
     import db
     import pollers
 
-    pid = db.add_product("Item", "pokemon", 1, 10, 0, "")
-    db.add_retailer(pid, "target", "123", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Item", "pokemon", 1, 10, 0, "")
+    await db.add_retailer(pid, "target", "123", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
-    def raise_error(identifier):
+    async def raise_error(identifier):
         raise ConnectionError("connection reset by peer")
 
     monkeypatch.setitem(pollers.POLLERS, "target", raise_error)
-    scheduler.poll_one(retailer_row)
+    await scheduler.poll_one(retailer_row)
 
     captured = capsys.readouterr()
     assert "connection reset by peer" in captured.out
 
-    status = db.latest_status(retailer_row["id"])
+    status = await db.latest_status(retailer_row["id"])
     assert "connection reset by peer" in status["error_detail"]
     assert status["raw_status"].startswith("ERROR:")
 
 
-def test_poll_one_logs_poller_provided_error_detail_to_console(monkeypatch, capsys):
+async def test_poll_one_logs_poller_provided_error_detail_to_console(monkeypatch, capsys):
     """Same guarantee, but for pollers that return a clean categorized
     status (e.g. Target's BLOCKED_OR_KEY_INVALID) instead of raising —
     the real HTTP detail behind that category should still reach the
@@ -249,39 +271,39 @@ def test_poll_one_logs_poller_provided_error_detail_to_console(monkeypatch, caps
     import db
     import pollers
 
-    pid = db.add_product("Item", "pokemon", 1, 10, 0, "")
-    db.add_retailer(pid, "target", "123", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Item", "pokemon", 1, 10, 0, "")
+    await db.add_retailer(pid, "target", "123", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
-    monkeypatch.setitem(pollers.POLLERS, "target", lambda identifier: {
+    monkeypatch.setitem(pollers.POLLERS, "target", async_return({
         "in_stock": False, "price": None, "raw_status": "BLOCKED_OR_KEY_INVALID",
         "error_detail": "HTTP 403 from Target: Forbidden by WAF rule 12345",
-    })
-    scheduler.poll_one(retailer_row)
+    }))
+    await scheduler.poll_one(retailer_row)
 
     captured = capsys.readouterr()
     assert "Forbidden by WAF rule 12345" in captured.out
 
-    status = db.latest_status(retailer_row["id"])
+    status = await db.latest_status(retailer_row["id"])
     assert status["error_detail"] == "HTTP 403 from Target: Forbidden by WAF rule 12345"
     assert status["raw_status"] == "BLOCKED_OR_KEY_INVALID"
 
 
-def test_should_check_queue_fast_now_only_applies_to_pokemon_center():
-    assert scheduler.should_check_queue_fast_now({"id": 5000, "retailer": "target"}) is False
+async def test_should_check_queue_fast_now_only_applies_to_pokemon_center():
+    assert await scheduler.should_check_queue_fast_now({"id": 5000, "retailer": "target"}) is False
 
 
-def test_should_check_queue_fast_now_respects_configured_interval(monkeypatch):
+async def test_should_check_queue_fast_now_respects_configured_interval():
     import config
-    config.set("pokemon_center_fast_check_seconds", "20")
+    await config.set("pokemon_center_fast_check_seconds", "20")
     item = {"id": 5001, "retailer": "pokemon_center"}
     scheduler._last_queue_checked[5001] = time.time() - 21
-    assert scheduler.should_check_queue_fast_now(item) is True
+    assert await scheduler.should_check_queue_fast_now(item) is True
     scheduler._last_queue_checked[5001] = time.time() - 5
-    assert scheduler.should_check_queue_fast_now(item) is False
+    assert await scheduler.should_check_queue_fast_now(item) is False
 
 
-def test_check_queue_fast_resolves_url_from_identifier_when_product_url_blank(monkeypatch):
+async def test_check_queue_fast_resolves_url_from_identifier_when_product_url_blank(monkeypatch):
     """Real bug caught during live testing: the fast check only read
     product_url, but Pokémon Center's documented convention is that the
     identifier field itself IS the URL when product_url is left blank —
@@ -292,76 +314,85 @@ def test_check_queue_fast_resolves_url_from_identifier_when_product_url_blank(mo
     import db
     import pollers
 
-    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://www.pokemoncenter.com/product/x", "")  # blank product_url
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://www.pokemoncenter.com/product/x", "")  # blank product_url
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
     captured_urls = []
-    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only",
-                         lambda url: (captured_urls.append(url), {"queue_live": False})[1])
 
-    scheduler.check_queue_fast(retailer_row)
+    async def fake_queue_check(url):
+        captured_urls.append(url)
+        return {"queue_live": False}
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", fake_queue_check)
+
+    await scheduler.check_queue_fast(retailer_row)
     assert captured_urls == ["https://www.pokemoncenter.com/product/x"]
 
 
-def test_check_queue_fast_detects_live_queue_and_alerts(monkeypatch):
+async def test_check_queue_fast_detects_live_queue_and_alerts(monkeypatch):
     """The actual feature request: a lightweight, frequent check that
     catches the queue opening without waiting for the slower full check."""
     import db
     import pollers
     import notifier
 
-    pid = db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Charizard ETB", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
-    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", lambda url: {"queue_live": True})
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", async_return({"queue_live": True}))
     dispatched = []
-    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
 
-    scheduler.check_queue_fast(retailer_row)
+    async def fake_dispatch(msg, ch):
+        dispatched.append((ch, msg))
+    monkeypatch.setattr(notifier, "dispatch", fake_dispatch)
+
+    await scheduler.check_queue_fast(retailer_row)
 
     assert len(dispatched) == 1
     assert "queue just went LIVE" in dispatched[0][1]
-    status = db.latest_status(retailer_row["id"])
+    status = await db.latest_status(retailer_row["id"])
     assert status["raw_status"] == "QUEUE_LIVE"
 
 
-def test_check_queue_fast_does_nothing_when_queue_not_live(monkeypatch):
+async def test_check_queue_fast_does_nothing_when_queue_not_live(monkeypatch):
     import db
     import pollers
     import notifier
 
-    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
-    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", lambda url: {"queue_live": False})
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", async_return({"queue_live": False}))
     dispatched = []
-    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
 
-    scheduler.check_queue_fast(retailer_row)
+    async def fake_dispatch(msg, ch):
+        dispatched.append((ch, msg))
+    monkeypatch.setattr(notifier, "dispatch", fake_dispatch)
+
+    await scheduler.check_queue_fast(retailer_row)
     assert dispatched == []
 
 
-def test_check_queue_fast_handles_exceptions_gracefully(monkeypatch, capsys):
+async def test_check_queue_fast_handles_exceptions_gracefully(monkeypatch, capsys):
     import db
     import pollers
 
-    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
-    def raise_error(url):
+    async def raise_error(url):
         raise ConnectionError("timed out")
 
     monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", raise_error)
-    scheduler.check_queue_fast(retailer_row)  # must not raise
+    await scheduler.check_queue_fast(retailer_row)  # must not raise
     captured = capsys.readouterr()
     assert "timed out" in captured.out
 
 
-def test_fast_check_and_full_check_share_the_same_alert_cooldown(monkeypatch):
+async def test_fast_check_and_full_check_share_the_same_alert_cooldown(monkeypatch):
     """The full check's own QUEUE_LIVE branch and the fast path both use
     _alert_queue_live_if_due, so an alert from one blocks a near-immediate
     duplicate from the other — they shouldn't double up."""
@@ -369,17 +400,20 @@ def test_fast_check_and_full_check_share_the_same_alert_cooldown(monkeypatch):
     import pollers
     import notifier
 
-    pid = db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
-    db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
-    retailer_row = db.list_retailers_for_polling()[0]
+    pid = await db.add_product("Item", "pokemon", 1, 49.99, 0, "discord")
+    await db.add_retailer(pid, "pokemon_center", "https://pokemoncenter.com/product/x", "")
+    retailer_row = (await db.list_retailers_for_polling())[0]
 
     dispatched = []
-    monkeypatch.setattr(notifier, "dispatch", lambda msg, ch: dispatched.append((ch, msg)))
-    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", lambda url: {"queue_live": True})
-    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
-                         lambda identifier: {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"})
 
-    scheduler.check_queue_fast(retailer_row)  # fires the first alert
-    scheduler.poll_one(retailer_row)  # immediately after — should be suppressed by the shared cooldown
+    async def fake_dispatch(msg, ch):
+        dispatched.append((ch, msg))
+    monkeypatch.setattr(notifier, "dispatch", fake_dispatch)
+    monkeypatch.setattr(pollers, "check_pokemon_center_queue_only", async_return({"queue_live": True}))
+    monkeypatch.setitem(pollers.POLLERS, "pokemon_center",
+                         async_return({"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"}))
+
+    await scheduler.check_queue_fast(retailer_row)  # fires the first alert
+    await scheduler.poll_one(retailer_row)  # immediately after — should be suppressed by the shared cooldown
 
     assert len(dispatched) == 1

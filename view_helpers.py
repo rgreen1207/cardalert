@@ -21,7 +21,7 @@ def format_timestamp(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%b %d, %I:%M %p").replace(" 0", " ")
 
 
-def enrich_product(product: dict) -> dict:
+async def enrich_product(product: dict) -> dict:
     """Adds display-ready fields to a product and each of its attached
     retailers: latest status per retailer, a parsed notify-channel list,
     and human-readable names throughout."""
@@ -29,24 +29,24 @@ def enrich_product(product: dict) -> dict:
     product["notify_channels_list"] = [c for c in (product.get("notify_channel") or "").split(",") if c]
     for r in product.get("retailers", []):
         r["retailer_display"] = display.retailer_name(r.get("retailer", ""))
-        status = db.latest_status(r["id"])
+        status = await db.latest_status(r["id"])
         if status:
             status["status_display"] = display.status_label(status.get("raw_status", ""))
         r["last_status"] = status
     return product
 
 
-def with_display_prices(product: dict, currency: str) -> dict:
+async def with_display_prices(product: dict, currency: str) -> dict:
     """Adds display_msrp on the product and display_price on each
     retailer, converted from the stored USD values. The stored USD values
     themselves are never touched here, since the over-price comparison
     logic in scheduler.py depends on comparing like currencies against
     what retailers actually report (always USD)."""
-    product["display_msrp"] = fx.usd_to_display(product.get("msrp"), currency)
+    product["display_msrp"] = await fx.usd_to_display(product.get("msrp"), currency)
     for r in product.get("retailers", []):
         status = r.get("last_status")
         if status and status.get("price") is not None:
-            r["display_price"] = fx.usd_to_display(status["price"], currency)
+            r["display_price"] = await fx.usd_to_display(status["price"], currency)
         else:
             r["display_price"] = None
     return product
@@ -68,15 +68,15 @@ def best_status_for_product(product: dict) -> dict:
     return {"retailer": None, "status": None, "in_stock": False}
 
 
-def common_context(request: Request, active_page: str) -> dict:
-    currency = config.get("currency")
-    rate_info = fx.get_rate(currency)
+async def common_context(request: Request, active_page: str) -> dict:
+    currency = await config.get("currency")
+    rate_info = await fx.get_rate(currency)
     return {
         "request": request,
         "active_page": active_page,
         "donate_url": DONATE_URL,
         "currency": currency,
-        "currency_symbol": config.currency_symbol(),
+        "currency_symbol": await config.currency_symbol(),
         "fx_stale": rate_info["stale"] and currency != "USD",
     }
 

@@ -9,10 +9,10 @@ happen at the product_retailer level, so if you've attached both Target
 and Amazon to the same product, each is checked and alerted on
 independently, one going in stock doesn't affect the other.
 """
-import sqlite3
+import aiosqlite
 import time
 import os
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 
 DB_PATH = "watchdata.db"
 
@@ -79,19 +79,19 @@ CREATE TABLE IF NOT EXISTS drop_signals (
 """
 
 
-@contextmanager
-def get_conn():
+@asynccontextmanager
+async def get_conn():
     # timeout=10 makes SQLite wait up to 10s for a lock instead of raising
-    # immediately — the scheduler's background thread writes to this DB
+    # immediately — the scheduler's background task writes to this DB
     # continuously (every poll logs a status row) while web requests read
     # and write concurrently, so some contention is normal, not a bug.
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
+    conn = await aiosqlite.connect(DB_PATH, timeout=10)
+    conn.row_factory = aiosqlite.Row
     try:
         yield conn
-        conn.commit()
+        await conn.commit()
     finally:
-        conn.close()
+        await conn.close()
         _lock_down_wal_sidecar_files()
 
 
@@ -112,76 +112,80 @@ def _lock_down_wal_sidecar_files():
 CURRENT_SCHEMA_VERSION = 4
 
 
-def init_db():
-    with get_conn() as conn:
+async def init_db():
+    async with get_conn() as conn:
         # WAL mode lets readers and writers avoid blocking each other in
         # most cases — a much better fit here than the default rollback
         # journal, since the scheduler writes continuously in its own
-        # thread while web requests read/write on theirs. This setting is
+        # task while web requests read/write concurrently. This setting is
         # stored in the database file itself, so it only needs setting
         # once, but PRAGMA calls are cheap and idempotent, so no harm in
         # it running on every startup.
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript(SCHEMA)
-        row = conn.execute("SELECT version FROM schema_version").fetchone()
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.executescript(SCHEMA)
+        cur = await conn.execute("SELECT version FROM schema_version")
+        row = await cur.fetchone()
         if row is None:
             # Distinguish a genuinely fresh DB from an old install that
             # predates the schema_version table entirely — the latter
             # needs to actually run the migration, not get stamped as
             # already current.
-            tables = [r["name"] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()]
+            cur = await conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r["name"] for r in await cur.fetchall()]
             starting_version = 0 if "watchlist" in tables else CURRENT_SCHEMA_VERSION
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (starting_version,))
-        _run_migrations(conn)
+            await conn.execute("INSERT INTO schema_version (version) VALUES (?)", (starting_version,))
+        await _run_migrations(conn)
     try:
         os.chmod(DB_PATH, 0o600)  # DB stores credentials via the settings table, owner-read-only
     except OSError:
         pass
 
 
-def _run_migrations(conn):
+async def _run_migrations(conn):
     """Numbered migrations. Add a new block + bump CURRENT_SCHEMA_VERSION
     when the schema changes — never edit the SCHEMA string in a way that
     breaks existing installs' data."""
-    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    cur = await conn.execute("SELECT version FROM schema_version")
+    row = await cur.fetchone()
     version = row["version"] if row else 0
 
     if version < 3:
-        tables = [r["name"] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()]
+        cur = await conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [r["name"] for r in await cur.fetchall()]
         if "watchlist" in tables:
-            _migrate_watchlist_to_products(conn)
-        conn.execute("UPDATE schema_version SET version = 3")
+            await _migrate_watchlist_to_products(conn)
+        await conn.execute("UPDATE schema_version SET version = 3")
 
     if version < 4:
-        status_cols = [c["name"] for c in conn.execute("PRAGMA table_info(status_log)").fetchall()]
+        cur = await conn.execute("PRAGMA table_info(status_log)")
+        status_cols = [c["name"] for c in await cur.fetchall()]
         if "error_detail" not in status_cols:
-            conn.execute("ALTER TABLE status_log ADD COLUMN error_detail TEXT")
-        conn.execute("UPDATE schema_version SET version = 4")
+            await conn.execute("ALTER TABLE status_log ADD COLUMN error_detail TEXT")
+        await conn.execute("UPDATE schema_version SET version = 4")
 
 
-def _migrate_watchlist_to_products(conn):
+async def _migrate_watchlist_to_products(conn):
     """One-time migration from the old single-retailer-per-item model.
     Each old watchlist row becomes one product with exactly one attached
     retailer, preserving the same id so anything referencing the old id
     (status_log, alerts_sent) can be remapped without guessing."""
-    old_rows = conn.execute("SELECT * FROM watchlist").fetchall()
+    cur = await conn.execute("SELECT * FROM watchlist")
+    old_rows = await cur.fetchall()
 
     # CREATE TABLE IF NOT EXISTS silently no-ops if status_log/alerts_sent
     # already exist with the OLD column set (watchlist_id, no
     # product_retailer_id/product_id) — add what's missing before trying
     # to write to those columns below.
-    status_cols = [c["name"] for c in conn.execute("PRAGMA table_info(status_log)").fetchall()]
+    cur = await conn.execute("PRAGMA table_info(status_log)")
+    status_cols = [c["name"] for c in await cur.fetchall()]
     if "product_retailer_id" not in status_cols:
-        conn.execute("ALTER TABLE status_log ADD COLUMN product_retailer_id INTEGER")
-    alert_cols = [c["name"] for c in conn.execute("PRAGMA table_info(alerts_sent)").fetchall()]
+        await conn.execute("ALTER TABLE status_log ADD COLUMN product_retailer_id INTEGER")
+    cur = await conn.execute("PRAGMA table_info(alerts_sent)")
+    alert_cols = [c["name"] for c in await cur.fetchall()]
     if "product_id" not in alert_cols:
-        conn.execute("ALTER TABLE alerts_sent ADD COLUMN product_id INTEGER")
+        await conn.execute("ALTER TABLE alerts_sent ADD COLUMN product_id INTEGER")
     if "product_retailer_id" not in alert_cols:
-        conn.execute("ALTER TABLE alerts_sent ADD COLUMN product_retailer_id INTEGER")
+        await conn.execute("ALTER TABLE alerts_sent ADD COLUMN product_retailer_id INTEGER")
 
     if not old_rows:
         return
@@ -191,7 +195,7 @@ def _migrate_watchlist_to_products(conn):
         row_keys = r.keys()
         game = r["game"] if "game" in row_keys and r["game"] else "pokemon"
         notify_channel = r["notify_channel"] if "notify_channel" in row_keys and r["notify_channel"] else ""
-        conn.execute(
+        await conn.execute(
             """INSERT INTO products
                (id, name, game, target_qty, remaining_qty, msrp,
                 max_pct_over_msrp, notify_channel, active, created_at)
@@ -200,37 +204,39 @@ def _migrate_watchlist_to_products(conn):
              r["msrp"], r["max_pct_over_msrp"], notify_channel,
              r["active"], r["created_at"]),
         )
-        cur = conn.execute(
+        cur = await conn.execute(
             "INSERT INTO product_retailers (product_id, retailer, identifier, product_url) "
             "VALUES (?, ?, ?, ?)",
             (r["id"], r["retailer"], r["identifier"], r["product_url"]),
         )
         retailer_id_map[r["id"]] = cur.lastrowid
 
-    old_status_cols = [c["name"] for c in conn.execute("PRAGMA table_info(status_log)").fetchall()]
+    cur = await conn.execute("PRAGMA table_info(status_log)")
+    old_status_cols = [c["name"] for c in await cur.fetchall()]
     if "watchlist_id" in old_status_cols:
         for old_id, new_retailer_id in retailer_id_map.items():
-            conn.execute(
+            await conn.execute(
                 "UPDATE status_log SET product_retailer_id = ? WHERE watchlist_id = ?",
                 (new_retailer_id, old_id),
             )
 
-    old_alert_cols = [c["name"] for c in conn.execute("PRAGMA table_info(alerts_sent)").fetchall()]
+    cur = await conn.execute("PRAGMA table_info(alerts_sent)")
+    old_alert_cols = [c["name"] for c in await cur.fetchall()]
     if "watchlist_id" in old_alert_cols:
         for old_id, new_retailer_id in retailer_id_map.items():
-            conn.execute(
+            await conn.execute(
                 "UPDATE alerts_sent SET product_id = ?, product_retailer_id = ? WHERE watchlist_id = ?",
                 (old_id, new_retailer_id, old_id),
             )
 
-    conn.execute("ALTER TABLE watchlist RENAME TO watchlist_migrated_backup")
+    await conn.execute("ALTER TABLE watchlist RENAME TO watchlist_migrated_backup")
 
 
 # --- Products ---
 
-def add_product(name, game, target_qty, msrp, max_pct_over_msrp, notify_channel) -> int:
-    with get_conn() as conn:
-        cur = conn.execute(
+async def add_product(name, game, target_qty, msrp, max_pct_over_msrp, notify_channel) -> int:
+    async with get_conn() as conn:
+        cur = await conn.execute(
             """INSERT INTO products
                (name, game, target_qty, remaining_qty, msrp, max_pct_over_msrp,
                 notify_channel, active, created_at)
@@ -241,62 +247,65 @@ def add_product(name, game, target_qty, msrp, max_pct_over_msrp, notify_channel)
         return cur.lastrowid
 
 
-def add_product_with_retailers(name, game, target_qty, msrp, max_pct_over_msrp,
-                                notify_channel, retailers: list) -> int:
+async def add_product_with_retailers(name, game, target_qty, msrp, max_pct_over_msrp,
+                                      notify_channel, retailers: list) -> int:
     """retailers: list of {"retailer": ..., "identifier": ..., "product_url": ...}"""
-    product_id = add_product(name, game, target_qty, msrp, max_pct_over_msrp, notify_channel)
+    product_id = await add_product(name, game, target_qty, msrp, max_pct_over_msrp, notify_channel)
     for r in retailers:
-        add_retailer(product_id, r["retailer"], r["identifier"], r.get("product_url", ""))
+        await add_retailer(product_id, r["retailer"], r["identifier"], r.get("product_url", ""))
     return product_id
 
 
-def get_product(product_id):
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+async def get_product(product_id):
+    async with get_conn() as conn:
+        cur = await conn.execute("SELECT * FROM products WHERE id = ?", (product_id,))
+        row = await cur.fetchone()
         return dict(row) if row else None
 
 
-def get_product_with_retailers(product_id):
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+async def get_product_with_retailers(product_id):
+    async with get_conn() as conn:
+        cur = await conn.execute("SELECT * FROM products WHERE id = ?", (product_id,))
+        row = await cur.fetchone()
         if not row:
             return None
         product = dict(row)
-        product["retailers"] = _retailers_for_product(conn, product_id)
+        product["retailers"] = await _retailers_for_product(conn, product_id)
         return product
 
 
-def list_products(active_only=False):
-    with get_conn() as conn:
+async def list_products(active_only=False):
+    async with get_conn() as conn:
         q = "SELECT * FROM products"
         if active_only:
             q += " WHERE active = 1"
         q += " ORDER BY created_at DESC"
-        products = [dict(r) for r in conn.execute(q).fetchall()]
+        cur = await conn.execute(q)
+        products = [dict(r) for r in await cur.fetchall()]
         for p in products:
-            p["retailers"] = _retailers_for_product(conn, p["id"])
+            p["retailers"] = await _retailers_for_product(conn, p["id"])
         return products
 
 
-def _retailers_for_product(conn, product_id):
-    rows = conn.execute(
+async def _retailers_for_product(conn, product_id):
+    cur = await conn.execute(
         "SELECT * FROM product_retailers WHERE product_id = ? ORDER BY id", (product_id,)
-    ).fetchall()
-    return [dict(r) for r in rows]
+    )
+    return [dict(r) for r in await cur.fetchall()]
 
 
-def update_product(product_id, name, game, target_qty, msrp, max_pct_over_msrp, notify_channel):
+async def update_product(product_id, name, game, target_qty, msrp, max_pct_over_msrp, notify_channel):
     """Editing a product. If target_qty changes, preserves how many
     you've already logged as purchased rather than resetting the
     countdown — e.g. if you'd bought 1 of an old target of 2 and raise the
     target to 3, remaining becomes 2 (3 - 1 already bought), not 3."""
-    existing = get_product(product_id)
+    existing = await get_product(product_id)
     if not existing:
         return
     already_purchased = max(0, existing["target_qty"] - existing["remaining_qty"])
     new_remaining = max(0, target_qty - already_purchased)
-    with get_conn() as conn:
-        conn.execute(
+    async with get_conn() as conn:
+        await conn.execute(
             """UPDATE products SET name = ?, game = ?, target_qty = ?, remaining_qty = ?,
                msrp = ?, max_pct_over_msrp = ?, notify_channel = ?,
                active = CASE WHEN ? > 0 THEN 1 ELSE 0 END
@@ -306,35 +315,36 @@ def update_product(product_id, name, game, target_qty, msrp, max_pct_over_msrp, 
         )
 
 
-def set_product_active(product_id, active: bool):
-    with get_conn() as conn:
-        conn.execute("UPDATE products SET active = ? WHERE id = ?", (1 if active else 0, product_id))
+async def set_product_active(product_id, active: bool):
+    async with get_conn() as conn:
+        await conn.execute("UPDATE products SET active = ? WHERE id = ?", (1 if active else 0, product_id))
 
 
-def update_remaining(product_id, remaining_qty):
-    with get_conn() as conn:
-        conn.execute("UPDATE products SET remaining_qty = ? WHERE id = ?", (remaining_qty, product_id))
+async def update_remaining(product_id, remaining_qty):
+    async with get_conn() as conn:
+        await conn.execute("UPDATE products SET remaining_qty = ? WHERE id = ?", (remaining_qty, product_id))
         if remaining_qty <= 0:
-            conn.execute("UPDATE products SET active = 0 WHERE id = ?", (product_id,))
+            await conn.execute("UPDATE products SET active = 0 WHERE id = ?", (product_id,))
 
 
-def delete_product(product_id):
-    with get_conn() as conn:
-        retailer_ids = [r["id"] for r in conn.execute(
+async def delete_product(product_id):
+    async with get_conn() as conn:
+        cur = await conn.execute(
             "SELECT id FROM product_retailers WHERE product_id = ?", (product_id,)
-        ).fetchall()]
+        )
+        retailer_ids = [r["id"] for r in await cur.fetchall()]
         for rid in retailer_ids:
-            conn.execute("DELETE FROM status_log WHERE product_retailer_id = ?", (rid,))
-        conn.execute("DELETE FROM product_retailers WHERE product_id = ?", (product_id,))
-        conn.execute("DELETE FROM alerts_sent WHERE product_id = ?", (product_id,))
-        conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+            await conn.execute("DELETE FROM status_log WHERE product_retailer_id = ?", (rid,))
+        await conn.execute("DELETE FROM product_retailers WHERE product_id = ?", (product_id,))
+        await conn.execute("DELETE FROM alerts_sent WHERE product_id = ?", (product_id,))
+        await conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
 
 
 # --- Product retailers (the actual thing that gets polled) ---
 
-def add_retailer(product_id, retailer, identifier, product_url="") -> int:
-    with get_conn() as conn:
-        cur = conn.execute(
+async def add_retailer(product_id, retailer, identifier, product_url="") -> int:
+    async with get_conn() as conn:
+        cur = await conn.execute(
             "INSERT INTO product_retailers (product_id, retailer, identifier, product_url) "
             "VALUES (?, ?, ?, ?)",
             (product_id, retailer, identifier, product_url),
@@ -342,26 +352,27 @@ def add_retailer(product_id, retailer, identifier, product_url="") -> int:
         return cur.lastrowid
 
 
-def get_retailer(product_retailer_id):
-    with get_conn() as conn:
-        row = conn.execute(
+async def get_retailer(product_retailer_id):
+    async with get_conn() as conn:
+        cur = await conn.execute(
             "SELECT * FROM product_retailers WHERE id = ?", (product_retailer_id,)
-        ).fetchone()
+        )
+        row = await cur.fetchone()
         return dict(row) if row else None
 
 
-def remove_retailer(product_retailer_id):
-    with get_conn() as conn:
-        conn.execute("DELETE FROM status_log WHERE product_retailer_id = ?", (product_retailer_id,))
-        conn.execute("DELETE FROM product_retailers WHERE id = ?", (product_retailer_id,))
+async def remove_retailer(product_retailer_id):
+    async with get_conn() as conn:
+        await conn.execute("DELETE FROM status_log WHERE product_retailer_id = ?", (product_retailer_id,))
+        await conn.execute("DELETE FROM product_retailers WHERE id = ?", (product_retailer_id,))
 
 
-def list_retailers_for_polling(active_only=True):
+async def list_retailers_for_polling(active_only=True):
     """Flat list of (product, retailer) pairings to poll, each annotated
     with its parent product's fields (msrp, max_pct_over_msrp,
     notify_channel, name, game, target_qty, remaining_qty, active) so the
     scheduler doesn't need a second lookup per row."""
-    with get_conn() as conn:
+    async with get_conn() as conn:
         q = """
             SELECT product_retailers.id AS id,
                    product_retailers.product_id AS product_id,
@@ -381,15 +392,16 @@ def list_retailers_for_polling(active_only=True):
         """
         if active_only:
             q += " WHERE products.active = 1"
-        return [dict(r) for r in conn.execute(q).fetchall()]
+        cur = await conn.execute(q)
+        return [dict(r) for r in await cur.fetchall()]
 
 
 # --- Status log (per product_retailer) ---
 
-def log_status(product_retailer_id, in_stock, price, over_msrp_pct, ignored_over_price,
-                raw_status, error_detail=None):
-    with get_conn() as conn:
-        conn.execute(
+async def log_status(product_retailer_id, in_stock, price, over_msrp_pct, ignored_over_price,
+                      raw_status, error_detail=None):
+    async with get_conn() as conn:
+        await conn.execute(
             """INSERT INTO status_log
                (product_retailer_id, ts, in_stock, price, over_msrp_pct, ignored_over_price,
                 raw_status, error_detail)
@@ -399,27 +411,29 @@ def log_status(product_retailer_id, in_stock, price, over_msrp_pct, ignored_over
         )
 
 
-def latest_status(product_retailer_id):
-    with get_conn() as conn:
-        r = conn.execute(
+async def latest_status(product_retailer_id):
+    async with get_conn() as conn:
+        cur = await conn.execute(
             "SELECT * FROM status_log WHERE product_retailer_id = ? ORDER BY ts DESC LIMIT 1",
             (product_retailer_id,),
-        ).fetchone()
+        )
+        r = await cur.fetchone()
         return dict(r) if r else None
 
 
-def restock_pattern(product_retailer_id):
+async def restock_pattern(product_retailer_id):
     """Pro-tier feature note: there is no pro tier, this is free for
     everyone. Summarizes which day-of-week / hour this specific
     (product, retailer) pairing tends to restock, purely from this
     install's own historical polling data."""
-    with get_conn() as conn:
-        rows = conn.execute(
+    async with get_conn() as conn:
+        cur = await conn.execute(
             """SELECT ts FROM status_log
                WHERE product_retailer_id = ? AND in_stock = 1 AND ignored_over_price = 0
                ORDER BY ts ASC""",
             (product_retailer_id,),
-        ).fetchall()
+        )
+        rows = await cur.fetchall()
     if not rows:
         return None
 
@@ -455,82 +469,86 @@ def restock_pattern(product_retailer_id):
 
 # --- Alerts ---
 
-def record_alert(product_id, message, product_retailer_id=None):
-    with get_conn() as conn:
-        conn.execute(
+async def record_alert(product_id, message, product_retailer_id=None):
+    async with get_conn() as conn:
+        await conn.execute(
             "INSERT INTO alerts_sent (product_id, product_retailer_id, ts, message) VALUES (?, ?, ?, ?)",
             (product_id, product_retailer_id, time.time(), message),
         )
 
 
-def recent_alerts(limit=50):
-    with get_conn() as conn:
-        rows = conn.execute(
+async def recent_alerts(limit=50):
+    async with get_conn() as conn:
+        cur = await conn.execute(
             """SELECT alerts_sent.*, products.name FROM alerts_sent
                JOIN products ON products.id = alerts_sent.product_id
                ORDER BY alerts_sent.ts DESC LIMIT ?""",
             (limit,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        )
+        return [dict(r) for r in await cur.fetchall()]
 
 
-def last_alert_time_for_retailer(product_retailer_id):
-    with get_conn() as conn:
-        row = conn.execute(
+async def last_alert_time_for_retailer(product_retailer_id):
+    async with get_conn() as conn:
+        cur = await conn.execute(
             "SELECT ts FROM alerts_sent WHERE product_retailer_id = ? ORDER BY ts DESC LIMIT 1",
             (product_retailer_id,),
-        ).fetchone()
+        )
+        row = await cur.fetchone()
         return row["ts"] if row else None
 
 
-def purge_old_alerts(older_than_days=7):
+async def purge_old_alerts(older_than_days=7):
     cutoff = time.time() - (older_than_days * 86400)
-    with get_conn() as conn:
-        conn.execute("DELETE FROM alerts_sent WHERE ts < ?", (cutoff,))
+    async with get_conn() as conn:
+        await conn.execute("DELETE FROM alerts_sent WHERE ts < ?", (cutoff,))
 
 
 # --- Settings (key/value, unrelated to products) ---
 
-def get_setting(key, default=None):
-    with get_conn() as conn:
-        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+async def get_setting(key, default=None):
+    async with get_conn() as conn:
+        cur = await conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = await cur.fetchone()
         return row["value"] if row else default
 
 
-def set_setting(key, value):
-    with get_conn() as conn:
-        conn.execute(
+async def set_setting(key, value):
+    async with get_conn() as conn:
+        await conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
 
 
-def all_settings():
-    with get_conn() as conn:
-        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+async def all_settings():
+    async with get_conn() as conn:
+        cur = await conn.execute("SELECT key, value FROM settings")
+        rows = await cur.fetchall()
         return {r["key"]: r["value"] for r in rows}
 
 
 # --- Drop signals (restock chatter/forecasts, unrelated to products) ---
 
-def add_drop_signal(source, retailer_guess, title, url, kind="chatter"):
-    with get_conn() as conn:
-        conn.execute(
+async def add_drop_signal(source, retailer_guess, title, url, kind="chatter"):
+    async with get_conn() as conn:
+        await conn.execute(
             "INSERT INTO drop_signals (ts, source, retailer_guess, kind, title, url) VALUES (?, ?, ?, ?, ?, ?)",
             (time.time(), source, retailer_guess, kind, title, url),
         )
 
 
-def signal_already_seen(url):
-    with get_conn() as conn:
-        row = conn.execute("SELECT id FROM drop_signals WHERE url = ?", (url,)).fetchone()
+async def signal_already_seen(url):
+    async with get_conn() as conn:
+        cur = await conn.execute("SELECT id FROM drop_signals WHERE url = ?", (url,))
+        row = await cur.fetchone()
         return row is not None
 
 
-def recent_drop_signals(limit=25):
-    with get_conn() as conn:
-        rows = conn.execute(
+async def recent_drop_signals(limit=25):
+    async with get_conn() as conn:
+        cur = await conn.execute(
             "SELECT * FROM drop_signals ORDER BY ts DESC LIMIT ?", (limit,)
-        ).fetchall()
-        return [dict(r) for r in rows]
+        )
+        return [dict(r) for r in await cur.fetchall()]

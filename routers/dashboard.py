@@ -11,23 +11,23 @@ router = APIRouter()
 
 
 @router.get("/")
-def dashboard(request: Request):
-    ctx = common_context(request, "dashboard")
+async def dashboard(request: Request):
+    ctx = await common_context(request, "dashboard")
     currency = ctx["currency"]
-    products = [with_display_prices(enrich_product(p), currency) for p in db.list_products()]
-    db.purge_old_alerts(older_than_days=7)
-    alerts = db.recent_alerts(limit=20)
+    products = [await with_display_prices(await enrich_product(p), currency) for p in await db.list_products()]
+    await db.purge_old_alerts(older_than_days=7)
+    alerts = await db.recent_alerts(limit=20)
     for a in alerts:
         a["when"] = format_timestamp(a["ts"])
-    signals = db.recent_drop_signals(limit=15)
+    signals = await db.recent_drop_signals(limit=15)
     pc_window_open = scheduler.pokemon_center_window_open()
     ctx.update(products=products, alerts=alerts, signals=signals, pc_window_open=pc_window_open)
     return templates.TemplateResponse("dashboard.html", ctx)
 
 
 @router.get("/retailers/{product_retailer_id}/pattern")
-def retailer_pattern(product_retailer_id: int):
-    pattern = db.restock_pattern(product_retailer_id)
+async def retailer_pattern(product_retailer_id: int):
+    pattern = await db.restock_pattern(product_retailer_id)
     if not pattern:
         return JSONResponse({"error": "not enough history yet"}, status_code=404)
     return pattern

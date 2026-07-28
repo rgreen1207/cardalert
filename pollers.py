@@ -1,13 +1,28 @@
-import os
+"""
+Retailer pollers.
+
+IMPORTANT SCOPE NOTE (read this before extending):
+Every function here does exactly one thing: fetch a public page/endpoint and
+read back stock + price. None of these functions add to cart, log in, hold a
+session, or submit any action on a retailer's site. That line is intentional.
+see PROJECT_LOG.md for why. If you're future-Claude or future-Ryan extending
+this file, keep new pollers read-only.
+
+Each poller is async and returns a dict:
+    {"in_stock": bool, "price": float | None, "raw_status": str}
+or raises on a hard failure (caller handles logging/backoff).
+
+Each call opens its own short-lived AsyncSession rather than sharing one
+module-level session across concurrent polls — these run concurrently out
+of scheduler.py now, and a dedicated connection per call is simpler and
+safer than coordinating a shared session/connection pool across tasks.
+"""
 import re
 import json
-import time
 import config
-import threading
 
 from bs4 import BeautifulSoup
-from curl_cffi import requests
-from playwright.sync_api import sync_playwright
+from curl_cffi.requests import AsyncSession
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -20,90 +35,10 @@ TARGET_HEADERS = {
     "Origin": "https://www.target.com",
     "Referer": "https://www.target.com/",
 }
-TARGET_SESSION = {
-    "api_key": None,
-    "cookies": {},
-    "visitor_id": None
-}
 TIMEOUT = 12
 
-# Thread lock prevents multiple parallel requests from triggering multiple browser instances simultaneously
-_SYNC_LOCK = threading.Lock()
-# Prevent hammering the sync function if Target is down
-_LAST_SYNC_TIME = 0
-SYNC_COOLDOWN = 300  # 5 minutes in seconds
 
-def sync_target_session(force=False):
-    """
-    Raspberry Pi Optimized Session Sync.
-    The 'with' statement guarantees that Playwright and Chromium are fully 
-    closed and garbage-collected out of RAM when finished.
-    """
-    global _LAST_SYNC_TIME
-    
-    with _SYNC_LOCK:
-        now = time.time()
-        if not force and (now - _LAST_TIME_SYNC) < SYNC_COOLDOWN:
-            print("[!] Sync requested, but cooldown active. Skipping to protect memory/CPU.")
-            return False
-
-        print("[*] Launching Chromium to synchronize Target session state...")
-        pi_chromium_path = "/usr/bin/chromium-browser"
-        if not os.path.exists(pi_chromium_path):
-            if os.path.exists("/usr/bin/chromium"):
-                pi_chromium_path = "/usr/bin/chromium"
-            else:
-                print("[-] Error: Native Chromium binary not found.")
-                return False
-
-        try:
-            # Context manager handles instantiation
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, executable_path=pi_chromium_path)
-                context = browser.new_context(
-                    user_agent=HEADERS["user-agent"],
-                    viewport={"width": 1920, "height": 1080}
-                )
-                page = context.new_page()
-                
-                # Fetch a baseline page to safely generate tracking sessions
-                page.goto("https://target.com/p/-/A-1011209279", wait_until="networkidle", timeout=45000)
-                
-                # Extract API Key from window configuration
-                try:
-                    runtime_config = page.evaluate("() => window.__TGT_DATA__")
-                    if runtime_config:
-                        api_key = runtime_config.get("__REDSKY_API_KEY__") or runtime_config.get("config", {}).get("apiKey")
-                        if api_key:
-                            TARGET_SESSION["api_key"] = api_key
-                except Exception:
-                    pass
-
-                if not TARGET_SESSION["api_key"]:
-                    content = page.content()
-                    match = re.search(r'"apiKey"\s*:\s*"([0-9a-f]{32})"', content)
-                    if match:
-                        TARGET_SESSION["api_key"] = match.group(1)
-
-                # Cache valid cookies & tracking metadata
-                browser_cookies = context.cookies()
-                cookie_dict = {c["name"]: c["value"] for c in browser_cookies}
-                TARGET_SESSION["cookies"] = cookie_dict
-                TARGET_SESSION["visitor_id"] = cookie_dict.get("VisitorID")
-
-                # Context manager reaches end here: browser, context, and page are explicitly closed.
-                # Playwright processes are entirely killed.
-                
-            _LAST_SYNC_TIME = time.time()
-            print(f"[+] Sync Successful. Cookies Cached: {len(cookie_dict)}")
-            return True
-            
-        except Exception as e:
-            print(f"[-] Raspberry Pi Session Sync Failed: {str(e)}")
-            return False
-
-
-def discover_target_api_key(candidate_tcins=None):
+async def discover_target_api_key(candidate_tcins=None):
     """Best-effort attempt to scrape a live Redsky API key from front-end pages."""
     urls_to_try = [f"https://www.target.com/p/-/A-{tcin}" for tcin in (candidate_tcins or [])]
     urls_to_try.append("https://www.target.com/p/-/A-1011209279")
@@ -114,18 +49,19 @@ def discover_target_api_key(candidate_tcins=None):
         r'"redskyApiKey"\s*:\s*"([0-9a-f]{32})"',
     ]
 
-    for url in urls_to_try:
-        try:
-            # impersonate="chrome124" mimics the exact TLS/JA4 handshake of Google Chrome
-            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
-            if r.status_code != 200:
+    async with AsyncSession() as s:
+        for url in urls_to_try:
+            try:
+                # impersonate="chrome124" mimics the exact TLS/JA4 handshake of Google Chrome
+                r = await s.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+                if r.status_code != 200:
+                    continue
+            except Exception:
                 continue
-        except Exception:
-            continue
-        for pattern in patterns:
-            match = re.search(pattern, r.text)
-            if match:
-                return match.group(1)
+            for pattern in patterns:
+                match = re.search(pattern, r.text)
+                if match:
+                    return match.group(1)
     return None
 
 
@@ -151,71 +87,84 @@ def _classify_block_response(r):
     return "BLOCKED_OR_KEY_INVALID", detail
 
 
-def check_target(tcin: str, store_id: str = "3991"):
-    """Queries Target's Redsky API using the dynamically managed session token."""
-    api_key = TARGET_SESSION["api_key"] or config.get("target_api_key") or "9f36aeafbe60771e321a7cc95a78140772ab3e96"
-    
+async def check_target(tcin: str, store_id: str = "3991"):
+    """
+    Queries Target's Redsky API using a spoofed TLS stack.
+    Checks both direct shipping availability and local store pickup availability.
+    """
+    api_key = await config.get("target_api_key") or "9f36aeafbe60771e321a7cc95a78140772ab3e96"
+
+    # Utilizing the production endpoint with an explicit pricing and fulfillment store loop
     url = (
-        "https://target.com"
+        "https://redsky.target.com/redsky_aggregations/v1/web/pdp_client_v1"
         f"?key={api_key}&tcin={tcin}"
         f"&pricing_store_id={store_id}"
         f"&store_id={store_id}"
         "&is_bot=false"
     )
-    
-    authenticated_headers = {**HEADERS}
-    if TARGET_SESSION["visitor_id"]:
-        authenticated_headers["x-visitor-id"] = TARGET_SESSION["visitor_id"]
 
     try:
-        r = requests.get(
-            url, 
-            headers=authenticated_headers, 
-            cookies=TARGET_SESSION["cookies"], 
-            timeout=TIMEOUT, 
-            impersonate="chrome124"
-        )
+        # Mandatory: impersonate keyword forces curl_cffi to match browser networking signatures
+        async with AsyncSession() as s:
+            r = await s.get(url, headers=TARGET_HEADERS, timeout=TIMEOUT, impersonate="chrome124")
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "REQUEST_FAILED", "error_detail": str(e)}
 
-    # Explicitly catch blocks, un-authenticated status codes, or captcha triggers
-    if r.status_code in (401, 403, 429) or "RttCheck" in r.text or "monocle" in r.text.lower():
-        return {"in_stock": False, "price": None, "raw_status": "SESSION_EXPIRED_NEEDS_SYNC", "error_detail": f"HTTP {r.status_code}"}
-        
+    if r.status_code in (401, 403, 429):
+        raw_status, detail = _classify_block_response(r)
+        return {"in_stock": False, "price": None, "raw_status": raw_status, "error_detail": detail}
+
     if r.status_code != 200:
         return {"in_stock": False, "price": None, "raw_status": f"HTTP_{r.status_code}", "error_detail": r.text[:200]}
 
     try:
         data = r.json()
-        product = data.get("data", {}).get("product")
-        if not product:
-            return {"in_stock": False, "price": None, "raw_status": "NOT_FOUND"}
+    except ValueError:
+        return {"in_stock": False, "price": None, "raw_status": "UNEXPECTED_RESPONSE",
+                "error_detail": f"Non-JSON response body: {r.text[:500]}"}
 
-        price = product.get("price", {}).get("current_retail")
-        fulfillment = product.get("fulfillment", {})
-        
-        shipping_status = fulfillment.get("shipping_options", {}).get("availability_status", "UNKNOWN")
-        inline_pickup = fulfillment.get("store_options", {}) if fulfillment.get("store_options") else {}
-        
-        # Guard clause handling store list structural variations safely
-        if isinstance(inline_pickup, list) and len(inline_pickup) > 0:
-            inline_pickup = inline_pickup[0]
-            
-        pickup_status = inline_pickup.get("order_pickup", {}).get("availability_status", "UNKNOWN") if isinstance(inline_pickup, dict) else "UNKNOWN"
-        
-        in_stock = (shipping_status == "IN_STOCK") or (pickup_status == "IN_STOCK")
-        return {"in_stock": in_stock, "price": price, "raw_status": f"Fulfillment Status -> Ship: {shipping_status} | Pickup: {pickup_status}"}
-    except Exception as e:
-        return {"in_stock": False, "price": None, "raw_status": "PARSE_ERROR", "error_detail": str(e)}
+    product = data.get("data", {}).get("product")
+    if not product:
+        return {"in_stock": False, "price": None, "raw_status": "NOT_FOUND"}
+
+    # Extract price
+    price = product.get("price", {}).get("current_retail")
+
+    # Extract fulfillment systems
+    fulfillment = product.get("fulfillment", {})
+
+    # 1. Check Nationwide Online Shipping Inventory
+    shipping_status = fulfillment.get("shipping_options", {}).get("availability_status", "UNKNOWN")
+    shipping_in_stock = shipping_status == "IN_STOCK"
+
+    # 2. Check Local Store Pickup Inventory (In-store or curbside pick up)
+    store_options = fulfillment.get("store_options") or []
+    inline_pickup = store_options[0] if isinstance(store_options, list) and store_options else {}
+    pickup_status = inline_pickup.get("order_pickup", {}).get("availability_status", "UNKNOWN")
+    in_store_stock = pickup_status == "IN_STOCK"
+
+    # Overall target system stock valuation
+    in_stock = shipping_in_stock or in_store_stock
+
+    raw_status_summary = f"Shipping: {shipping_status} | Store Pickup: {pickup_status}"
+
+    return {
+        "in_stock": in_stock,
+        "price": price,
+        "raw_status": raw_status_summary,
+        "shipping_available": shipping_in_stock,
+        "store_pickup_available": in_store_stock
+    }
 
 
-def check_walmart(product_url: str):
+async def check_walmart(product_url: str):
     """
     Scrapes Walmart's Next.js data layout.
     Uses 'impersonate' to clear the strict Walmart bot firewall.
     """
     try:
-        r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+        async with AsyncSession() as s:
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
         if r.status_code in (401, 403, 429):
             return {"in_stock": False, "price": None, "raw_status": f"BLOCKED_HTTP_{r.status_code}"}
         r.raise_for_status()
@@ -228,7 +177,7 @@ def check_walmart(product_url: str):
     )
     if not match:
         return {"in_stock": False, "price": None, "raw_status": "PARSE_FAILED_NO_BLOB"}
-        
+
     try:
         blob = json.loads(match.group(1))
         item = blob["props"]["pageProps"]["initialData"]["data"]["product"]
@@ -240,44 +189,38 @@ def check_walmart(product_url: str):
         return {"in_stock": False, "price": None, "raw_status": "PARSE_FAILED_BAD_JSON", "error_detail": str(e)}
 
 
-def check_bestbuy(sku: str):
-    """
-    Monitors Best Buy's real-time internal fulfillment API instead of lagging developer API.
-    Does not require a developer API key.
-    """
-    # Internal real-time endpoint used by Best Buy's dynamic UI to check regional fulfillment
-    url = f"https://bestbuy.com{sku}/fulfillment"
-    
-    # Best Buy checks specific headers for API traffic
-    bb_headers = {
-        **HEADERS,
-        "accept": "application/json",
-        "referer": f"https://bestbuy.com{sku}.p",
-    }
-    
+async def check_bestbuy(sku: str):
+    """Uses Best Buy's official public Products API. Needs a free API key from
+    developer.bestbuy.com — set it on the /settings page, or BESTBUY_API_KEY
+    in the environment / .env file."""
+    api_key = await config.get("bestbuy_api_key")
+    if not api_key:
+        return {"in_stock": False, "price": None, "raw_status": "NO_API_KEY"}
+    url = (
+        f"https://api.bestbuy.com/v1/products(sku={sku})"
+        f"?apiKey={api_key}&format=json&show=sku,name,salePrice,onlineAvailability"
+    )
     try:
-        r = requests.get(url, headers=bb_headers, timeout=TIMEOUT, impersonate="chrome124")
-        if r.status_code == 404:
-            return {"in_stock": False, "price": None, "raw_status": "SKU_NOT_FOUND"}
+        async with AsyncSession() as s:
+            r = await s.get(url, timeout=TIMEOUT)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "API_FAILED", "error_detail": str(e)}
 
-    # Parse real-time button state logic
-    button_state = data.get("results", [{}])[0].get("buttonState", {})
-    button_status = button_state.get("buttonState", "UNKNOWN")
-    
-    # If button says ADD_TO_CART or PREORDER, it's buyable instantly
-    in_stock = button_status in ("ADD_TO_CART", "PREORDER", "COLLECT_ONLINE")
-    
-    return {"in_stock": in_stock, "price": None, "raw_status": button_status}
+    products = data.get("products", [])
+    if not products:
+        return {"in_stock": False, "price": None, "raw_status": "NOT_FOUND"}
+    p = products[0]
+    in_stock = bool(p.get("onlineAvailability"))
+    return {"in_stock": in_stock, "price": p.get("salePrice"), "raw_status": str(in_stock)}
 
 
-def check_bn(product_url: str):
+async def check_bn(product_url: str):
     """Barnes & Noble scraper reinforced against Cloudflare checks."""
     try:
-        r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+        async with AsyncSession() as s:
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
         r.raise_for_status()
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "REQUEST_FAILED", "error_detail": str(e)}
@@ -289,30 +232,32 @@ def check_bn(product_url: str):
     return {"in_stock": not sold_out, "price": price, "raw_status": "SOLD_OUT" if sold_out else "AVAILABLE"}
 
 
-
-def check_pokemon_center_queue_only(product_url: str):
+async def check_pokemon_center_queue_only(product_url: str):
     """Safely checks for Pokemon Center Queue-it redirects using Chrome TLS emulation."""
     try:
-        r = requests.head(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
-        if r.status_code == 405:
-            r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+        async with AsyncSession() as s:
+            r = await s.head(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+            if r.status_code == 405:
+                r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
     except Exception:
         try:
-            r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+            async with AsyncSession() as s:
+                r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
         except Exception:
             return {"queue_live": False, "error": "CONNECTION_FAILED"}
-            
+
     queue_live = "queue-it" in r.url or "queue.pokemoncenter.com" in r.url or r.status_code == 202
     return {"queue_live": queue_live}
 
 
-def check_pokemon_center(product_url: str):
+async def check_pokemon_center(product_url: str):
     """
-    Scrapes Pokemon Center inventory. 
+    Scrapes Pokemon Center inventory.
     Uses Beautiful Soup instead of raw string search because product names often contain the words 'add to cart'.
     """
     try:
-        r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+        async with AsyncSession() as s:
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
         if r.status_code == 403:
             return {"in_stock": False, "price": None, "raw_status": "BLOCKED_BY_AKAMAI"}
         r.raise_for_status()
@@ -323,10 +268,10 @@ def check_pokemon_center(product_url: str):
         return {"in_stock": False, "price": None, "raw_status": "QUEUE_LIVE"}
 
     soup = BeautifulSoup(r.text, 'html.parser')
-    
+
     # Locate the definitive buy button attribute
     cart_button = soup.find('button', class_=re.compile(r'add-to-cart', re.I))
-    
+
     # If the button exists and isn't disabled, it's in stock
     in_stock = False
     if cart_button:
@@ -339,21 +284,22 @@ def check_pokemon_center(product_url: str):
     return {"in_stock": in_stock, "price": price, "raw_status": "AVAILABLE" if in_stock else "SOLD_OUT"}
 
 
-def check_lgs_shopify(shop_and_handle: str):
+async def check_lgs_shopify(shop_and_handle: str):
     """Unchanged: Shopify's public api files are fast, clean, and rarely blocked."""
     domain, _, handle = shop_and_handle.partition("/products/")
     domain = domain.rstrip("/")
     if not domain.startswith("http"):
         domain = "https://" + domain
     url = f"{domain}/products/{handle}.json"
-    
+
     try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        async with AsyncSession() as s:
+            r = await s.get(url, headers=HEADERS, timeout=TIMEOUT)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "FAILED", "error_detail": str(e)}
-        
+
     product = data.get("product", {})
     variants = product.get("variants", [])
     if not variants:
@@ -363,10 +309,11 @@ def check_lgs_shopify(shop_and_handle: str):
     return {"in_stock": in_stock, "price": price, "raw_status": "AVAILABLE" if in_stock else "SOLD_OUT"}
 
 
-def check_lgs_generic(product_url: str):
+async def check_lgs_generic(product_url: str):
     """Universal fallback scanner for non-major local card shop platforms."""
     try:
-        r = requests.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+        async with AsyncSession() as s:
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
         r.raise_for_status()
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "FAILED", "error_detail": str(e)}
@@ -380,12 +327,19 @@ def check_lgs_generic(product_url: str):
     return {"in_stock": in_stock, "price": price, "raw_status": "SOLD_OUT" if sold_out else "AVAILABLE"}
 
 
-def check_amazon(identifier: str):
-    """
-    Amazon Poller. 
-    Strictly filters out third-party scalpers. Only flags as in-stock if 
-    the buy-box or offer fulfillment is natively handled by Amazon.com (Merchant ID: ATVPDKIKX0DER).
-    """
+async def check_amazon(identifier: str):
+    """Amazon. Only counts as in-stock when the listing is actually
+    'Ships from and sold by Amazon.com', not a third-party marketplace
+    seller. Third-party listings are where most of the price-gouging on
+    hot TCG products happens, so those are deliberately excluded rather
+    than alerted on.
+
+    `identifier` can be a bare 10-character ASIN or a full product URL,
+    either way we normalize to a canonical /dp/ URL for the actual request.
+
+    Caveat, more than any other poller here: Amazon fights scraping harder
+    than any other retailer on this list and changes page structure often.
+    Treat this one as the most likely to need re-tuning over time."""
     asin_match = re.fullmatch(r"[A-Z0-9]{10}", identifier.strip())
     if asin_match:
         asin = identifier.strip()
@@ -396,10 +350,11 @@ def check_amazon(identifier: str):
         asin = url_match.group(1)
 
     url = f"https://www.amazon.com/dp/{asin}"
-    
+
     try:
         # impersonate="chrome124" mimics legitimate shopper TLS handshakes
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+        async with AsyncSession() as s:
+            r = await s.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
         if r.status_code in (401, 403, 429):
             return {"in_stock": False, "price": None, "raw_status": f"BLOCKED_HTTP_{r.status_code}"}
         r.raise_for_status()
@@ -407,66 +362,35 @@ def check_amazon(identifier: str):
         return {"in_stock": False, "price": None, "raw_status": "REQUEST_FAILED", "error_detail": str(e)}
 
     text = r.text
-    
-    # 1. Catch Amazon Captcha Challenges Early
+
     if "captcha" in r.url or "validatecaptcha" in text.lower() or "enter the characters you see below" in text.lower():
-        return {"in_stock": False, "price": None, "raw_status": "CAPTCHA_REQUIRED", "error_detail": "Amazon triggered a verification captcha screen."}
+        return {"in_stock": False, "price": None, "raw_status": "CAPTCHA_REQUIRED",
+                "error_detail": "Amazon triggered a verification captcha screen."}
 
-    soup = BeautifulSoup(text, 'html.parser')
+    sold_by_amazon = bool(re.search(r"ships from and sold by amazon(\.com)?", text, re.I))
+    third_party_seller = bool(re.search(r"sold by(?!\s*amazon)[^<]{1,60}", text, re.I)) and not sold_by_amazon
+    sold_out = bool(re.search(r"(currently unavailable|out of stock)", text, re.I))
+    has_buybox = bool(re.search(r"add-to-cart-button|addToCart", text, re.I))
 
-    # 2. Extract Price safely via structured microdata / meta tags instead of volatile regex
     price = None
-    price_tag = soup.find("span", class_="a-price-whole")
-    if price_tag:
+    price_match = re.search(r'"apexPriceToPay"[^}]*?"amount"\s*:\s*([\d.]+)', text)
+    if not price_match:
+        price_match = re.search(r'class="a-price-whole">([\d,]+)<', text)
+    if price_match:
         try:
-            # Clean commas and fractional elements
-            price_str = price_tag.get_text().replace(",", "").replace("\n", "").strip()
-            fraction_tag = soup.find("span", class_="a-price-fraction")
-            if fraction_tag:
-                price_str += f".{fraction_tag.get_text().strip()}"
-            price = float(price_str)
+            price = float(price_match.group(1).replace(",", ""))
         except ValueError:
             price = None
 
-    # Fallback to structural JSON metadata on the page if HTML elements shift
-    if not price:
-        twister_match = re.search(r'"apexPriceToPay"[^}]*?"amount"\s*:\s*([\d.]+)', text)
-        if twister_match:
-            price = float(twister_match.group(1))
-
-    # 3. Detect Bot Mitigation Error Pages (The "Dog of Amazon" page)
-    sold_out_indicator = soup.find(id="outOfStock") or "currently unavailable" in text.lower()
-    buybox_button = soup.find(id="add-to-cart-button") or soup.find(id="buy-now-button")
-    
-    if sold_out_indicator or not buybox_button:
-        return {"in_stock": False, "price": price, "raw_status": "SOLD_OUT"}
-
-    # 4. Bulletproof Merchant Verification
-    # Amazon's backend identifier for their own retail inventory is ATVPDKIKX0DER
-    # We inspect hidden buy-box parameters for this specific merchant tag
-    amazon_merchant_id = "ATVPDKIKX0DER"
-    
-    merchant_input = soup.find("input", {"id": "merchantID"}) or soup.find("input", {"name": "merchantID"})
-    
-    sold_by_amazon = False
-    if merchant_input and merchant_input.get("value") == amazon_merchant_id:
-        sold_by_amazon = True
-    else:
-        # Fallback text check if Amazon changes input layout
-        fulfillment_text = soup.find(id="fulfillmentDisplayArea")
-        fulfillment_str = fulfillment_text.get_text().lower() if fulfillment_text else ""
-        if "ships from" in fulfillment_str and "amazon" in fulfillment_str and "sold by" in fulfillment_str:
-            # Simple text confirmation ensuring it's not a third party listing
-            if "sold by amazon" in fulfillment_str:
-                sold_by_amazon = True
-
-    if not sold_by_amazon:
+    if third_party_seller and not sold_by_amazon:
         return {"in_stock": False, "price": price, "raw_status": "THIRD_PARTY_SELLER_ONLY"}
+    if sold_out or not has_buybox:
+        return {"in_stock": False, "price": price, "raw_status": "SOLD_OUT"}
+    in_stock = sold_by_amazon and has_buybox and not sold_out
+    return {"in_stock": in_stock, "price": price, "raw_status": "AVAILABLE" if in_stock else "UNKNOWN"}
 
-    return {"in_stock": True, "price": price, "raw_status": "AVAILABLE"}
 
-
-def verify_shopify_store(domain: str):
+async def verify_shopify_store(domain: str):
     """
     Store-verifier used by the dashboard. Confirms domain structure.
     Employs full stealth signatures to check stores that use strict Cloudflare shielding.
@@ -475,7 +399,8 @@ def verify_shopify_store(domain: str):
     if not domain.startswith("http"):
         domain = "https://" + domain
     try:
-        r = requests.get(f"{domain}/products.json?limit=1", headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+        async with AsyncSession() as s:
+            r = await s.get(f"{domain}/products.json?limit=1", headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
         if r.status_code == 200 and "products" in r.json():
             return {"is_shopify": True, "sample_product_count": len(r.json()["products"])}
     except Exception:

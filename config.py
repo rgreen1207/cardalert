@@ -40,41 +40,41 @@ CURRENCY_SYMBOLS = {
 }
 
 
-def currency_symbol() -> str:
-    return CURRENCY_SYMBOLS.get(get("currency"), "$")
+async def currency_symbol() -> str:
+    return CURRENCY_SYMBOLS.get(await get("currency"), "$")
 
 
-def get(key: str) -> str:
+async def get(key: str) -> str:
     if key not in _KEYS:
         raise KeyError(f"Unknown config key: {key}")
     env_name, default = _KEYS[key]
-    db_value = db.get_setting(key)
+    db_value = await db.get_setting(key)
     if db_value is not None and db_value != "":
         return db_value
     return os.environ.get(env_name, default)
 
 
-def set(key: str, value: str):
+async def set(key: str, value: str):
     if key not in _KEYS:
         raise KeyError(f"Unknown config key: {key}")
     # Strips whitespace so a copy-pasted webhook URL/token with a trailing
     # space or newline (common from mobile clipboards) doesn't silently
     # break requests that use it later.
-    db.set_setting(key, (value or "").strip())
+    await db.set_setting(key, (value or "").strip())
 
 
-def all_values() -> dict:
-    return {k: get(k) for k in _KEYS}
+async def all_values() -> dict:
+    return {k: await get(k) for k in _KEYS}
 
 
 POKEMON_CENTER_FAST_CHECK_FLOOR_SECONDS = 10
 
 
-def pokemon_center_fast_check_seconds() -> int:
+async def pokemon_center_fast_check_seconds() -> int:
     """Clamped to a floor so this can never be set low enough to become
     genuinely excessive polling, regardless of what ends up in .env or
     the settings table."""
-    raw = get("pokemon_center_fast_check_seconds")
+    raw = await get("pokemon_center_fast_check_seconds")
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -85,15 +85,15 @@ def pokemon_center_fast_check_seconds() -> int:
 POKEMON_CENTER_REPEAT_ALERT_FLOOR_SECONDS = 30
 
 
-def pokemon_center_repeat_alerts_enabled() -> bool:
-    return get("pokemon_center_repeat_alerts") == "1"
+async def pokemon_center_repeat_alerts_enabled() -> bool:
+    return await get("pokemon_center_repeat_alerts") == "1"
 
 
-def pokemon_center_repeat_alert_seconds() -> int:
+async def pokemon_center_repeat_alert_seconds() -> int:
     """Clamped to a floor for the same reason as the fast-check
     interval — this is only used at all when repeat alerts are enabled,
     but should still never allow a genuinely excessive repeat rate."""
-    raw = get("pokemon_center_repeat_alert_seconds")
+    raw = await get("pokemon_center_repeat_alert_seconds")
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -106,33 +106,33 @@ import hashlib
 import secrets as _secrets
 
 
-def set_dashboard_password(plaintext: str):
+async def set_dashboard_password(plaintext: str):
     if not plaintext:
-        db.set_setting("dashboard_password_hash", "")
-        db.set_setting("dashboard_password_salt", "")
+        await db.set_setting("dashboard_password_hash", "")
+        await db.set_setting("dashboard_password_salt", "")
         return
     salt = _secrets.token_hex(16)
     digest = hashlib.sha256((salt + plaintext).encode()).hexdigest()
-    db.set_setting("dashboard_password_salt", salt)
-    db.set_setting("dashboard_password_hash", digest)
+    await db.set_setting("dashboard_password_salt", salt)
+    await db.set_setting("dashboard_password_hash", digest)
 
 
-def check_dashboard_password(plaintext: str) -> bool:
-    salt = db.get_setting("dashboard_password_salt", "")
-    stored_hash = db.get_setting("dashboard_password_hash", "")
+async def check_dashboard_password(plaintext: str) -> bool:
+    salt = await db.get_setting("dashboard_password_salt", "")
+    stored_hash = await db.get_setting("dashboard_password_hash", "")
     if not stored_hash:
         return False
     digest = hashlib.sha256((salt + plaintext).encode()).hexdigest()
     return _secrets.compare_digest(digest, stored_hash)
 
 
-def dashboard_password_is_set() -> bool:
-    return bool(db.get_setting("dashboard_password_hash", ""))
+async def dashboard_password_is_set() -> bool:
+    return bool(await db.get_setting("dashboard_password_hash", ""))
 
 
-def is_setup_complete() -> bool:
-    return db.get_setting("setup_complete") == "1"
+async def is_setup_complete() -> bool:
+    return await db.get_setting("setup_complete") == "1"
 
 
-def mark_setup_complete():
-    db.set_setting("setup_complete", "1")
+async def mark_setup_complete():
+    await db.set_setting("setup_complete", "1")
