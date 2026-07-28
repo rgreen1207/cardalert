@@ -35,6 +35,21 @@ release means both: add an entry here, then tag the commit.
   has, and that's now documented honestly rather than implied to be a
   real fix for anti-bot blocking.
 
+## [0.0.14]
+### Changed
+- Bumped the TLS/JA3 impersonation profile used for every retailer
+  request from `chrome124` to `chrome146` (the newest desktop Chrome
+  profile `curl_cffi` 0.15.0 supports), and updated the `User-Agent`
+  header to match — a fingerprint claiming an outdated Chrome version
+  is itself a signal anti-bot systems can use, and the two now stay in
+  sync via a single `IMPERSONATE` constant instead of a hardcoded
+  string repeated at every call site. Reported motivation: a user
+  seeing consistent "Blocked — captcha required" responses from
+  Target. This is a best-effort mitigation, not a guaranteed fix — a
+  real captcha challenge can't be solved programmatically without
+  either a captcha-solving service or a real browser session, neither
+  of which fits this project's read-only, no-session-capture scope.
+
 ## [0.0.13]
 ### Fixed
 - **Reverted a scope-boundary violation introduced in the last pull**:

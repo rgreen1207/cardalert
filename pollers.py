@@ -24,9 +24,14 @@ import config
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
+# Keep this in sync with IMPERSONATE below — a User-Agent claiming a
+# different Chrome version than the TLS/JA3 fingerprint curl_cffi is
+# actually presenting is itself a mismatch anti-bot systems can flag.
+IMPERSONATE = "chrome146"
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+                  "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
 TARGET_HEADERS = {
@@ -52,8 +57,8 @@ async def discover_target_api_key(candidate_tcins=None):
     async with AsyncSession() as s:
         for url in urls_to_try:
             try:
-                # impersonate="chrome124" mimics the exact TLS/JA4 handshake of Google Chrome
-                r = await s.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+                # impersonate=IMPERSONATE mimics the exact TLS/JA4 handshake of Google Chrome
+                r = await s.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate=IMPERSONATE)
                 if r.status_code != 200:
                     continue
             except Exception:
@@ -106,7 +111,7 @@ async def check_target(tcin: str, store_id: str = "3991"):
     try:
         # Mandatory: impersonate keyword forces curl_cffi to match browser networking signatures
         async with AsyncSession() as s:
-            r = await s.get(url, headers=TARGET_HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+            r = await s.get(url, headers=TARGET_HEADERS, timeout=TIMEOUT, impersonate=IMPERSONATE)
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "REQUEST_FAILED", "error_detail": str(e)}
 
@@ -164,7 +169,7 @@ async def check_walmart(product_url: str):
     """
     try:
         async with AsyncSession() as s:
-            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate=IMPERSONATE)
         if r.status_code in (401, 403, 429):
             return {"in_stock": False, "price": None, "raw_status": f"BLOCKED_HTTP_{r.status_code}"}
         r.raise_for_status()
@@ -220,7 +225,7 @@ async def check_bn(product_url: str):
     """Barnes & Noble scraper reinforced against Cloudflare checks."""
     try:
         async with AsyncSession() as s:
-            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate=IMPERSONATE)
         r.raise_for_status()
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "REQUEST_FAILED", "error_detail": str(e)}
@@ -236,13 +241,13 @@ async def check_pokemon_center_queue_only(product_url: str):
     """Safely checks for Pokemon Center Queue-it redirects using Chrome TLS emulation."""
     try:
         async with AsyncSession() as s:
-            r = await s.head(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+            r = await s.head(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate=IMPERSONATE)
             if r.status_code == 405:
-                r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+                r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate=IMPERSONATE)
     except Exception:
         try:
             async with AsyncSession() as s:
-                r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+                r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate=IMPERSONATE)
         except Exception:
             return {"queue_live": False, "error": "CONNECTION_FAILED"}
 
@@ -257,7 +262,7 @@ async def check_pokemon_center(product_url: str):
     """
     try:
         async with AsyncSession() as s:
-            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate="chrome124")
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True, impersonate=IMPERSONATE)
         if r.status_code == 403:
             return {"in_stock": False, "price": None, "raw_status": "BLOCKED_BY_AKAMAI"}
         r.raise_for_status()
@@ -313,7 +318,7 @@ async def check_lgs_generic(product_url: str):
     """Universal fallback scanner for non-major local card shop platforms."""
     try:
         async with AsyncSession() as s:
-            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+            r = await s.get(product_url, headers=HEADERS, timeout=TIMEOUT, impersonate=IMPERSONATE)
         r.raise_for_status()
     except Exception as e:
         return {"in_stock": False, "price": None, "raw_status": "FAILED", "error_detail": str(e)}
@@ -352,9 +357,9 @@ async def check_amazon(identifier: str):
     url = f"https://www.amazon.com/dp/{asin}"
 
     try:
-        # impersonate="chrome124" mimics legitimate shopper TLS handshakes
+        # impersonate=IMPERSONATE mimics legitimate shopper TLS handshakes
         async with AsyncSession() as s:
-            r = await s.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+            r = await s.get(url, headers=HEADERS, timeout=TIMEOUT, impersonate=IMPERSONATE)
         if r.status_code in (401, 403, 429):
             return {"in_stock": False, "price": None, "raw_status": f"BLOCKED_HTTP_{r.status_code}"}
         r.raise_for_status()
@@ -400,7 +405,7 @@ async def verify_shopify_store(domain: str):
         domain = "https://" + domain
     try:
         async with AsyncSession() as s:
-            r = await s.get(f"{domain}/products.json?limit=1", headers=HEADERS, timeout=TIMEOUT, impersonate="chrome124")
+            r = await s.get(f"{domain}/products.json?limit=1", headers=HEADERS, timeout=TIMEOUT, impersonate=IMPERSONATE)
         if r.status_code == 200 and "products" in r.json():
             return {"is_shopify": True, "sample_product_count": len(r.json()["products"])}
     except Exception:
