@@ -35,6 +35,22 @@ release means both: add an entry here, then tag the commit.
   has, and that's now documented honestly rather than implied to be a
   real fix for anti-bot blocking.
 
+## [0.0.15]
+### Changed
+- Backed the TLS/JA3 impersonation profile down from `chrome146`
+  (v0.0.14) to `chrome136`. v0.0.14's jump to the newest profile
+  `curl_cffi` supports didn't help Target and coincided with Amazon
+  starting to return captcha challenges too, which it hadn't been
+  before — plausibly because a bleeding-edge, rarely-used fingerprint
+  is *more* conspicuous, not less, and/or `curl_cffi`'s implementation
+  of a very new profile is less battle-tested than an established one.
+  `chrome136` is a more conventional middle-ground. **This is another
+  unverified guess, not a confirmed fix** — there's no way to test
+  against Target/Amazon's live anti-bot systems from a dev
+  environment, so this is being shipped on the reasonable-adjustment
+  theory, same as v0.0.14, and may need another round if it doesn't
+  help either.
+
 ## [0.0.14]
 ### Changed
 - Bumped the TLS/JA3 impersonation profile used for every retailer
